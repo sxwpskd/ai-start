@@ -22,7 +22,30 @@
       <!-- 右侧：用户操作区域 -->
       <a-col>
         <div class="user-login-status">
-          <a-button type="primary">登录</a-button>
+          <div v-if="loginUserStore.loginUser.id">
+            <a-dropdown>
+              <template #overlay>
+                <a-menu>
+                <a-menu-item @click="dologout">
+                  <UserOutlined />
+                  退出登录
+                </a-menu-item>
+                  </a-menu>
+              </template>
+              <a class="ant-dropdown-link" @click.prevent>
+                <a-space>
+                  <a-avatar :src="loginUserStore.loginUser.userAvatar" />
+                  {{ loginUserStore.loginUser.userName || loginUserStore.getRandomName() }}
+                </a-space>
+              </a>
+
+            </a-dropdown>
+
+          </div>
+          <div v-else>
+          <a-button type="primary" href="/user/login">登录</a-button>
+          </div>
+
         </div>
       </a-col>
     </a-row>
@@ -30,10 +53,15 @@
 </template>
 
 <script setup lang="ts">
-import { h, ref } from 'vue'
+import {computed, h, ref} from 'vue'
 import { useRouter } from 'vue-router'
-import type { MenuProps } from 'ant-design-vue'
+import {type MenuProps, message} from 'ant-design-vue'
+import {useLoginUserStore} from "@/stores/loginUser.ts";
+import { UserOutlined } from '@ant-design/icons-vue'
+import { userLogout } from '@/api/userController.ts'
 
+//获取用户登录状态
+const loginUserStore= useLoginUserStore()
 const router = useRouter()
 // 当前选中菜单
 const selectedKeys = ref<string[]>(['/'])
@@ -43,7 +71,7 @@ router.afterEach((to, from, next) => {
 })
 
 // 菜单配置项
-const menuItems = ref([
+const originItems = [
   {
     key: '/',
     label: '首页',
@@ -51,11 +79,34 @@ const menuItems = ref([
   },
   {
     key: '/about',
-    label: '关于',
-    title: '关于我们',
-  },
+    label: '智能体',
+    title: '准备扩展',
+  },{
+    key: '/admin/userManage',
+    label: '用户管理',
+    title: '用户管理',
+  }
 
-])
+]
+
+
+// 过滤菜单项
+const filterMenus = (menus = [] as MenuProps['items']) => {
+  return menus?.filter((menu) => {
+    const menuKey = menu?.key as string
+    if (menuKey?.startsWith('/admin')) {
+      const loginUser = loginUserStore.loginUser
+      if (!loginUser || loginUser.userRole !== 'admin') {
+        return false
+      }
+    }
+    return true
+  })
+}
+
+// 展示在菜单的路由数组
+const menuItems = computed<MenuProps['items']>(
+  () => filterMenus(originItems))
 
 // 处理菜单点击
 const handleMenuClick: MenuProps['onClick'] = (e) => {
@@ -64,6 +115,20 @@ const handleMenuClick: MenuProps['onClick'] = (e) => {
   // 跳转到对应页面
   if (key.startsWith('/')) {
     router.push(key)
+  }
+}
+//退出登录
+const dologout = async () => {
+  const res=await userLogout()
+  if(res.data.code==0){
+    loginUserStore.setLoginUser({
+      userName:'未登录'
+    })
+    sessionStorage.removeItem('randomName')
+    message.success('退出登录成功')
+    await router.push('/user/login')
+  }else {
+    message.error('退出登录失败'+res.data.message)
   }
 }
 </script>

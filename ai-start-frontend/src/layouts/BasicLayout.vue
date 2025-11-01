@@ -24,9 +24,10 @@ import GlobalFooter from '@/components/GlobalFooter.vue'
 }
 
 .main-content {
-  max-width: 1200px;
+
   padding: 24px;
   background: white;
   margin: 16px auto 56px;
 }
+/*max-width: 1200px;*/
 </style>
