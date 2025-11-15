@@ -18,7 +18,7 @@ class AiCodeGeneratorFacadeTest {
     @Test
     void generateAndSaveCode() {
        File file= aiCodeGeneratorFacade.
-                generateAndSaveCode("1+1=?", CodeGenTypeEnum.BASE);
+                generateAndSaveCode("我不想上学，怎么办？", CodeGenTypeEnum.BASE);
         Assertions.assertNotNull(file);
     }
 

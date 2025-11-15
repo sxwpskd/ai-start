@@ -26,6 +26,10 @@ public class MultiFileCodeFileSaverTemplate extends CodeFileSaverTemplate<MultiF
         writeToFile(baseDirPath, "style.css", result.getCssCode());
         // 保存 JavaScript 文件
         writeToFile(baseDirPath, "script.js", result.getJsCode());
+        // 保存结果文件
+        writeToFile(baseDirPath, "result.txt", " 输出tokens："+result.getCompletionTokens()+
+                "。消耗总tokens："+result.getTotalTokens()+
+                "。消耗总时间："+result.getProcessingTime());
     }
 
     @Override

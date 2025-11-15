@@ -21,7 +21,10 @@ public class HtmlCodeFileSaverTemplate extends CodeFileSaverTemplate<HtmlCodeRes
     @Override
     protected void saveFiles(HtmlCodeResult result, String baseDirPath) {
         // 保存 HTML 文件
-        writeToFile(baseDirPath, "index.html", result.getHtmlCode());
+        writeToFile(baseDirPath, "index.html", result.getHtmlCode()+
+                " 输出tokens："+result.getCompletionTokens()+
+                "。消耗总tokens："+result.getTotalTokens()+
+                "。消耗总时间："+result.getProcessingTime());
     }
 
     @Override
