@@ -1,9 +1,11 @@
 package org.aistart.ai;
 
+import dev.langchain4j.model.openai.internal.shared.Usage;
 import dev.langchain4j.service.SystemMessage;
 import org.aistart.ai.model.BaseCodeResult;
 import org.aistart.ai.model.HtmlCodeResult;
 import org.aistart.ai.model.MultiFileCodeResult;
+import reactor.core.publisher.Flux;
 
 public interface AiCodeGeneratorService {
 
@@ -13,6 +15,8 @@ public interface AiCodeGeneratorService {
     @SystemMessage(fromResource = "prompt/base-prompt.txt")
     BaseCodeResult generateBaseCode(String prompt);
 
+    @SystemMessage(fromResource = "prompt/base-prompt.txt")
+    Flux<String> generateBaseCodeStream(String prompt);
 
         /**
          * 生成 HTML 代码
@@ -23,6 +27,8 @@ public interface AiCodeGeneratorService {
         @SystemMessage(fromResource = "prompt/html-prompt.txt")
         HtmlCodeResult generateHtmlCode(String userMessage);
 
+        @SystemMessage(fromResource = "prompt/html-prompt.txt")
+        Flux<String> generateHtmlCodeStream(String userMessage);
         /**
          * 生成多文件代码
          *
@@ -31,6 +37,10 @@ public interface AiCodeGeneratorService {
          */
         @SystemMessage(fromResource = "prompt/multi-prompt.txt")
         MultiFileCodeResult generateMultiFileCode(String userMessage);
+
+        @SystemMessage(fromResource = "prompt/multi-prompt.txt")
+        Flux<String> generateMultiFileCodeStream(String userMessage);
+        Usage getLastUsage(String userMessage);
     }
 
 
