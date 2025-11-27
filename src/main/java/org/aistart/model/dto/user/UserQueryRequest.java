@@ -1,4 +1,4 @@
-package org.aistart.model.dto;
+package org.aistart.model.dto.user;
 
 import lombok.Data;
 import lombok.EqualsAndHashCode;

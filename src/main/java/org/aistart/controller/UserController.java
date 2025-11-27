@@ -1,7 +1,6 @@
 package org.aistart.controller;
 
 import cn.hutool.core.bean.BeanUtil;
-import cn.hutool.core.thread.ThreadUtil;
 import com.mybatisflex.core.paginate.Page;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
@@ -13,18 +12,13 @@ import org.aistart.constant.UserConstant;
 import org.aistart.exception.BusinessException;
 import org.aistart.exception.ErrorCode;
 import org.aistart.exception.ThrowUtils;
-import org.aistart.model.dto.*;
+import org.aistart.model.dto.user.*;
 import org.aistart.model.vo.LoginUserVO;
 import org.aistart.model.vo.UserVO;
-import org.apache.commons.lang3.ThreadUtils;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.aistart.model.entity.User;
 import org.aistart.service.UserService;
 import org.springframework.web.bind.annotation.RestController;

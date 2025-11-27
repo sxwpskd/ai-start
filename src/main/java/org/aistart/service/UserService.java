@@ -3,7 +3,7 @@ package org.aistart.service;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.service.IService;
 import jakarta.servlet.http.HttpServletRequest;
-import org.aistart.model.dto.UserQueryRequest;
+import org.aistart.model.dto.user.UserQueryRequest;
 import org.aistart.model.entity.User;
 import org.aistart.model.vo.LoginUserVO;
 import org.aistart.model.vo.UserVO;
