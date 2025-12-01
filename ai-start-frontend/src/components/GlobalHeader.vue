@@ -5,7 +5,7 @@
       <a-col flex="200px">
         <RouterLink to="/">
           <div class="header-left">
-            <img class="logo" src="@/assets/logo.png" alt="Logo" />
+            <img class="logo" src="../assets/aiAvatar.png" alt="Logo" />
             <h1 class="site-title">aiDemo应用生成</h1>
           </div>
         </RouterLink>
@@ -85,6 +85,11 @@ const originItems = [
     key: '/admin/userManage',
     label: '用户管理',
     title: '用户管理',
+  },
+  {
+    key: '/admin/appManage',
+    label: '应用管理',
+    title: '应用管理',
   }
 
 ]
@@ -152,6 +157,7 @@ const dologout = async () => {
 
 .site-title {
   margin: 0;
+
   font-size: 18px;
   color: #1890ff;
 }
