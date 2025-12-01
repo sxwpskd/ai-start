@@ -17,7 +17,7 @@ import java.util.List;
  */
 public interface AppService extends IService<App> {
 /*
-* 获取应用
+* 获取应用封装类
 *
 * */
     AppVO getAppVO(App app);
@@ -30,6 +30,16 @@ public interface AppService extends IService<App> {
     * 构造应用查询条件
     * */
     QueryWrapper getQueryWrapper(AppQueryRequest appQueryRequest);
-
+/**
+ * 通过对话生成项目
+ *
+ *
+ * */
     Flux<String> chatToGenCode(Long appId, String message, User loginUser);
+
+    /**
+     * 应用部署
+     *
+     * */
+    String deployApp(Long appId, User loginUser);
 }

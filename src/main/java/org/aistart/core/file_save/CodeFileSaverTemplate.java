@@ -3,8 +3,10 @@ package org.aistart.core.file_save;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
+import org.aistart.constant.AppConstant;
 import org.aistart.exception.BusinessException;
 import org.aistart.exception.ErrorCode;
+import org.aistart.model.entity.App;
 import org.aistart.model.enums.CodeGenTypeEnum;
 
 import java.io.File;
@@ -19,8 +21,7 @@ public abstract class CodeFileSaverTemplate<T> {
 
     // 文件保存根目录
     protected static final String
-            FILE_SAVE_ROOT_DIR = System.getProperty("user.dir")
-            + "/tmp/new_code_output";
+            FILE_SAVE_ROOT_DIR = AppConstant.CODE_OUTPUT_ROOT_DIR;
 
     /**
      * 模板方法：保存代码的标准流程
