@@ -98,6 +98,18 @@ export async function deleteApp(body: API.DeleteRequest, options?: { [key: strin
   })
 }
 
+/** 此处后端没有提供注释 POST /app/deploy */
+export async function deployApp(body: API.AppDeployRequest, options?: { [key: string]: any }) {
+  return request<API.BaseResponseString>('/app/deploy', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  })
+}
+
 /** 此处后端没有提供注释 GET /app/get/vo */
 export async function getAppVoById(
   // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)
@@ -153,16 +165,4 @@ export async function updateApp(body: API.AppUpdateRequest, options?: { [key: st
     data: body,
     ...(options || {}),
   })
-  }
-  /** 此处后端没有提供注释 POST /app/deploy *///AppDeployRequest
-export async function deployApp(body: API.AppDeployRequest, options?: { [key: string]: any }) {
-    return request<API.BaseResponseString>('/app/deploy', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      data: body,
-      ...(options || {}),
-    })
-  }
-
+}
