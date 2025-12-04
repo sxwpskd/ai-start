@@ -3,6 +3,7 @@ package org.aistart.core.AIfacade;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.aistart.ai.AiCodeGeneratorService;
+import org.aistart.ai.AiCodeGeneratorServiceFactory;
 import org.aistart.ai.model.BaseCodeResult;
 import org.aistart.ai.model.HtmlCodeResult;
 import org.aistart.ai.model.MultiFileCodeResult;
@@ -24,7 +25,7 @@ import java.io.File;
 public class AiCodeGeneratorFacade {
 
     @Resource
-    private AiCodeGeneratorService aiCodeGeneratorService;
+    private AiCodeGeneratorServiceFactory aiCodeGeneratorServiceFactory;
 
     /**
      * 统一入口：根据类型生成并保存代码
@@ -38,6 +39,8 @@ public class AiCodeGeneratorFacade {
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
+        //用工厂创造服务
+        AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId);
         return switch (codeGenTypeEnum) {
             case BASE -> {BaseCodeResult result = aiCodeGeneratorService.generateBaseCode(userMessage);
                 //yield  CodeFileSaver.saveBaseCodeResult(result);
@@ -63,6 +66,8 @@ public class AiCodeGeneratorFacade {
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
+        //用工厂创造服务
+        AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId);
         return switch (codeGenTypeEnum) {
             case BASE -> {
                 Flux<String> result = aiCodeGeneratorService.generateBaseCodeStream(userMessage);
