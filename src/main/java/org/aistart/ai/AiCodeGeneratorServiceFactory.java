@@ -9,6 +9,7 @@ import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.aistart.service.ChatHistoryService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -29,6 +30,8 @@ public class AiCodeGeneratorServiceFactory {
     private StreamingChatModel streamingChatModel;
     @Resource
     private RedisChatMemoryStore redisChatMemoryStore;
+    @Resource
+    private ChatHistoryService chatHistoryService;
 
     /**
      * AI 服务实例缓存
@@ -71,6 +74,9 @@ public class AiCodeGeneratorServiceFactory {
                 .chatMemoryStore(redisChatMemoryStore)
                 .maxMessages(20)
                 .build();
+        // 从数据库加载历史对话记录到内存记忆中
+chatHistoryService.loadChatHistoryToMemory(appId, chatMemory,20);
+
         return AiServices.builder(AiCodeGeneratorService.class)
                 .chatModel(chatModel)
                 .streamingChatModel(streamingChatModel)

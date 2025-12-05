@@ -1,6 +1,11 @@
 spring:
   application:
     name: ai-start
+  #session
+  session:
+    store-type: redis
+    # session过期时间 s
+    timeout: 3600
     # mysql
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -20,6 +25,10 @@ server:
   port: 8100
   servlet:
     context-path: /ai  #便于区分前后端
+    #cookie
+    session:
+      cookie:
+        max-age: 3600
 # springdoc-openapi项目配置
 springdoc:
 
