@@ -1,7 +1,9 @@
 package org.aistart.ai;
 
 import dev.langchain4j.model.openai.internal.shared.Usage;
+import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;
+import dev.langchain4j.service.UserMessage;
 import org.aistart.ai.model.BaseCodeResult;
 import org.aistart.ai.model.HtmlCodeResult;
 import org.aistart.ai.model.MultiFileCodeResult;
@@ -41,6 +43,16 @@ public interface AiCodeGeneratorService {
         @SystemMessage(fromResource = "prompt/multi-prompt.txt")
         Flux<String> generateMultiFileCodeStream(String userMessage);
         Usage getLastUsage(String userMessage);
-    }
+
+    /**
+     * 生成 Vue 项目代码（流式）
+     *
+     * @param userMessage 用户消息
+     * @return 生成过程的流式响应
+     */
+    @SystemMessage(fromResource = "prompt/vue-prompt.txt")
+    Flux<String> generateVueProjectCodeStream(@MemoryId long appId, @UserMessage String userMessage);
+
+}
 
 
