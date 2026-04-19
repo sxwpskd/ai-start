@@ -52,7 +52,7 @@ public class AiCodeGeneratorFacade {
             }
             case MULTI_FILE -> {
                 MultiFileCodeResult result = aiCodeGeneratorService.generateMultiFileCode(userMessage);
-                yield  CodeFileSaverExecutor.executeSaver(result, codeGenTypeEnum,appId);
+                yield  CodeFileSaverExecutor.executeSaver(result, CodeGenTypeEnum.MULTI_FILE,appId);
             }
             default -> {
                 String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();
@@ -83,7 +83,7 @@ public class AiCodeGeneratorFacade {
             }
             case VUE_PROJECT -> {
                 Flux<String> result = aiCodeGeneratorService.generateVueProjectCodeStream(appId,userMessage);
-                yield  processCoseStream(result, codeGenTypeEnum,appId);
+                yield  processCoseStream(result, CodeGenTypeEnum.MULTI_FILE,appId);
             }
             default -> {
                 String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();

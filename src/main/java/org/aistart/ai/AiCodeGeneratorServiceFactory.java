@@ -31,9 +31,9 @@ public class AiCodeGeneratorServiceFactory {
     // ChatModel是一个用于处理AI对话的模型接口
     @Resource
     private ChatModel chatModel;
-    @Resource
+    @Resource(name = "openAiStreamingChatModel")
     private StreamingChatModel openaiStreamingChatModel;
-    @Resource
+    @Resource(name = "reasoningStreamingChatModel")
     private StreamingChatModel reasoningStreamingChatModel;
     @Resource
     private RedisChatMemoryStore redisChatMemoryStore;

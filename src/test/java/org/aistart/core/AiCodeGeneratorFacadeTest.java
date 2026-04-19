@@ -15,7 +15,20 @@ import java.util.List;
 class AiCodeGeneratorFacadeTest {
 @Resource
     private AiCodeGeneratorFacade aiCodeGeneratorFacade;
+
     @Test
+    void generateVueProjectCodeStream() {
+        Flux<String> codeStream = aiCodeGeneratorFacade.generateAndSaveCodeStream(
+                "简单的任务记录网站，总代码量不超过 100 行",
+                CodeGenTypeEnum.VUE_PROJECT, 3L);
+        // 阻塞等待所有数据收集完成
+        List<String> result = codeStream.collectList().block();
+        // 验证结果
+        Assertions.assertNotNull(result);
+        String completeContent = String.join("搞定了", result);
+        Assertions.assertNotNull(completeContent);
+    }
+    /*@Test
     void generateAndSaveCode() {
        File file= aiCodeGeneratorFacade.
                 generateAndSaveCode("我不想上学，怎么办？", CodeGenTypeEnum.BASE);
@@ -36,4 +49,5 @@ class AiCodeGeneratorFacadeTest {
         }
 
     }
+    */
 }
