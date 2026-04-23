@@ -1,5 +1,9 @@
 package org.aistart.core.AIfacade;
 
+import cn.hutool.json.JSONUtil;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.service.TokenStream;
+import dev.langchain4j.service.tool.ToolExecution;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.aistart.ai.AiCodeGeneratorService;
@@ -7,6 +11,9 @@ import org.aistart.ai.AiCodeGeneratorServiceFactory;
 import org.aistart.ai.model.BaseCodeResult;
 import org.aistart.ai.model.HtmlCodeResult;
 import org.aistart.ai.model.MultiFileCodeResult;
+import org.aistart.ai.model.message.AiResponseMessage;
+import org.aistart.ai.model.message.ToolExecutedMessage;
+import org.aistart.ai.model.message.ToolRequestMessage;
 import org.aistart.core.file_save.CodeFileSaverExecutor;
 import org.aistart.core.parser.CodeParserExecutor;
 import org.aistart.exception.BusinessException;
@@ -82,8 +89,8 @@ public class AiCodeGeneratorFacade {
                 yield  processCoseStream(result, codeGenTypeEnum,appId);
             }
             case VUE_PROJECT -> {
-                Flux<String> result = aiCodeGeneratorService.generateVueProjectCodeStream(appId,userMessage);
-                yield  processCoseStream(result, CodeGenTypeEnum.MULTI_FILE,appId);
+                TokenStream result = aiCodeGeneratorService.generateVueProjectCodeStream(appId,userMessage);
+                yield  processTokenStream(result);
             }
             default -> {
                 String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();
@@ -92,6 +99,13 @@ public class AiCodeGeneratorFacade {
         };
     }
 
+    /**
+     * 流式处理，这里系统创建文档，而非ai创建，所以需要id
+     * @param resultStream
+     * @param codeGenTypeEnum
+     * @param appId
+     * @return
+     */
     private Flux<String> processCoseStream(Flux<String> resultStream,CodeGenTypeEnum codeGenTypeEnum,Long appId) {
 
         long startTime = System.currentTimeMillis();
@@ -114,6 +128,39 @@ public class AiCodeGeneratorFacade {
             } catch (Exception e) {
                 log.info("创建失败", e.getMessage());
             }
+        });
+    }
+    /**
+     * 将 TokenStream 转换为 Flux<String>，并传递工具调用信息
+     *这里是vue项目，由ai调用工具生成文档，所以不需要id
+     * @param tokenStream TokenStream 对象
+     * @return Flux<String> 流式响应
+     */
+    private Flux<String> processTokenStream(TokenStream tokenStream) {
+        return Flux.create(sink -> {
+            tokenStream.onPartialResponse((String partialResponse) -> {
+                        AiResponseMessage aiResponseMessage =
+                                new AiResponseMessage(partialResponse);
+                        sink.next(JSONUtil.toJsonStr(aiResponseMessage));
+                    }) //获取ai调用工具的流输出
+                    .onPartialToolExecutionRequest((index, toolExecutionRequest) -> {
+                        ToolRequestMessage toolRequestMessage =
+                                new ToolRequestMessage(toolExecutionRequest);
+                        sink.next(JSONUtil.toJsonStr(toolRequestMessage));
+                    })//获取ai调用工具的结果
+                    .onToolExecuted((ToolExecution toolExecution) -> {
+                        ToolExecutedMessage toolExecutedMessage =
+                                new ToolExecutedMessage(toolExecution);
+                        sink.next(JSONUtil.toJsonStr(toolExecutedMessage));
+                    })//调用完成
+                    .onCompleteResponse((ChatResponse response) -> {
+                        sink.complete();
+                    })
+                    .onError((Throwable error) -> {
+                        error.printStackTrace();
+                        sink.error(error);
+                    })
+                    .start();
         });
     }
 

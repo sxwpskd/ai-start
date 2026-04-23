@@ -3,6 +3,7 @@ package org.aistart.ai;
 import dev.langchain4j.model.openai.internal.shared.Usage;
 import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;
+import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.UserMessage;
 import org.aistart.ai.model.BaseCodeResult;
 import org.aistart.ai.model.HtmlCodeResult;
@@ -51,7 +52,7 @@ public interface AiCodeGeneratorService {
      * @return 生成过程的流式响应
      */
     @SystemMessage(fromResource = "prompt/vue-prompt.txt")
-    Flux<String> generateVueProjectCodeStream(@MemoryId long appId, @UserMessage String userMessage);
+    TokenStream generateVueProjectCodeStream(@MemoryId long appId, @UserMessage String userMessage);
 
 }
 
