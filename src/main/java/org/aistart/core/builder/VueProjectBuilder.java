@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit;
  *由于window系统执行命令npm需要npm.cmd，所以需要判断当前系统，并添加后缀
  * */
 @Slf4j
+@Component
 public class VueProjectBuilder {
 
 

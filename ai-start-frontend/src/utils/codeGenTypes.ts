@@ -4,8 +4,12 @@
 export enum CodeGenTypeEnum {
   HTML = 'html',
   MULTI_FILE = 'multi_file',
-  BASE = 'base'
+  BASE = 'base',
+  VUE_PROJECT = 'vue_project',
 }
+
+
+
 
 /**
  * 代码生成类型配置
@@ -21,7 +25,10 @@ export const CODE_GEN_TYPE_CONFIG = {
   },  [CodeGenTypeEnum.BASE]: {
     label: '基础模式',
     value: CodeGenTypeEnum.BASE,
-  }
+  } , [CodeGenTypeEnum.VUE_PROJECT]: {
+  label: 'Vue 项目模式',
+    value: CodeGenTypeEnum.VUE_PROJECT,
+},
 } as const
 
 /**
