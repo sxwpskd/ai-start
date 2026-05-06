@@ -16,12 +16,12 @@ import java.util.List;
  * @author <a>me</a>
  */
 public interface AppService extends IService<App> {
-/*
+/**
 * 获取应用封装类
 *
 * */
     AppVO getAppVO(App app);
-/*
+/**
 * 获取封装列表
 * */
     List<AppVO> getAppVOList(List<App> appList);
@@ -42,4 +42,6 @@ public interface AppService extends IService<App> {
      *
      * */
     String deployApp(Long appId, User loginUser);
+
+    void generateAppScreenshotAsync(Long appId, String appUrl);
 }
