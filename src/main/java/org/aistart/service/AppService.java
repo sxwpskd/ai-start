@@ -2,6 +2,7 @@ package org.aistart.service;
 
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.service.IService;
+import org.aistart.model.dto.app.AppAddRequest;
 import org.aistart.model.dto.app.AppQueryRequest;
 import org.aistart.model.entity.App;
 import org.aistart.model.entity.User;
@@ -16,7 +17,9 @@ import java.util.List;
  * @author <a>me</a>
  */
 public interface AppService extends IService<App> {
-/**
+    Long createApp(AppAddRequest appAddRequest, User loginUser);
+
+    /**
 * 获取应用封装类
 *
 * */

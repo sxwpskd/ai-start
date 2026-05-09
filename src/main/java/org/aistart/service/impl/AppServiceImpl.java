@@ -9,6 +9,7 @@ import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.aistart.ai.AiCodeGenTypeRoutingService;
 import org.aistart.constant.AppConstant;
 import org.aistart.core.AIfacade.AiCodeGeneratorFacade;
 import org.aistart.core.builder.VueProjectBuilder;
@@ -16,6 +17,7 @@ import org.aistart.core.handler.StreamHandlerExecutor;
 import org.aistart.exception.BusinessException;
 import org.aistart.exception.ErrorCode;
 import org.aistart.exception.ThrowUtils;
+import org.aistart.model.dto.app.AppAddRequest;
 import org.aistart.model.dto.app.AppQueryRequest;
 import org.aistart.model.entity.App;
 import org.aistart.mapper.AppMapper;
@@ -60,6 +62,29 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private VueProjectBuilder vueProjectBuilder;
     @Resource
     private ScreenshotService screenshotService;
+    @Resource
+    private AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService;
+
+    @Override
+    public Long createApp(AppAddRequest appAddRequest, User loginUser) {
+        // 参数校验
+        String initPrompt = appAddRequest.getInitPrompt();
+        ThrowUtils.throwIf(StrUtil.isBlank(initPrompt), ErrorCode.PARAMS_ERROR, "初始化 prompt 不能为空");
+        // 构造入库对象
+        App app = new App();
+        BeanUtil.copyProperties(appAddRequest, app);
+        app.setUserId(loginUser.getId());
+        // 应用名称暂时为 initPrompt 前 12 位
+        app.setAppName(initPrompt.substring(0, Math.min(initPrompt.length(), 12)));
+        // 使用 AI 智能选择代码生成类型
+        CodeGenTypeEnum selectedCodeGenType = aiCodeGenTypeRoutingService.routeCodeGenType(initPrompt);
+        app.setCodeGenType(selectedCodeGenType.getValue());
+        // 插入数据库
+        boolean result = this.save(app);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+        log.info("应用创建成功，ID: {}, 类型: {}", app.getId(), selectedCodeGenType.getValue());
+        return app.getId();
+    }
 
     @Override
     public AppVO getAppVO(App app) {
@@ -153,12 +178,18 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         //return  aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId);
     }
 
+/**
+ * 部署应用方法
+ * @param appId 应用ID
+ * @param loginUser 登录用户信息
+ * @return 返回应用部署URL
+ */
     @Override
     public String deployApp(Long appId, User loginUser) {
-        // 1. 参数校验
+        // 1. 参数校验：检查应用ID和用户登录状态
         ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 不能为空");
         ThrowUtils.throwIf(loginUser == null, ErrorCode.NOT_LOGIN_ERROR, "用户未登录");
-        // 2. 查询应用信息
+        // 2. 查询应用信息：根据ID获取应用详情
         App app = this.getById(appId);
         ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR, "应用不存在");
         // 3. 验证用户是否有权限部署该应用，仅本人可以部署

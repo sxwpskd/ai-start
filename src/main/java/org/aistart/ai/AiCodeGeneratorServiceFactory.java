@@ -47,7 +47,8 @@ public class AiCodeGeneratorServiceFactory {
      * - 写入后 30 分钟过期
      * - 访问后 10 分钟过期
      */
-    private final Cache<String, AiCodeGeneratorService> serviceCache = Caffeine.newBuilder()
+    private final Cache<String, AiCodeGeneratorService>
+            serviceCache = Caffeine.newBuilder()
             .maximumSize(1000)//保存1000条
             .expireAfterWrite(Duration.ofMinutes(30))//写入后30分钟过期
             .expireAfterAccess(Duration.ofMinutes(5))//访问后5分钟过期
@@ -73,13 +74,15 @@ public class AiCodeGeneratorServiceFactory {
      */
      public AiCodeGeneratorService getAiCodeGeneratorService(long appId, CodeGenTypeEnum codeGenType) {
         String cacheKey = buildCacheKey(appId, codeGenType);
-        return serviceCache.get(cacheKey, key -> createAiCodeGeneratorService(appId, codeGenType));
+        return serviceCache.get(cacheKey, key ->
+                createAiCodeGeneratorService(appId, codeGenType));
     }
     /**
      * 根据appId获取服务
      * 包括创建Ai代码生成器服务以及记忆
      * */
-    private AiCodeGeneratorService createAiCodeGeneratorService(long appId, CodeGenTypeEnum codeGenType) {
+    private AiCodeGeneratorService createAiCodeGeneratorService(long appId,
+                                                                CodeGenTypeEnum codeGenType) {
         log.info("为 appId: {} 创建新的 AI 服务实例", appId);
         // 根据 appId 构建独立的对话记忆
         MessageWindowChatMemory chatMemory = MessageWindowChatMemory

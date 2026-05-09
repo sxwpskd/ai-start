@@ -106,7 +106,9 @@ public class AiCodeGeneratorFacade {
      * @param appId
      * @return
      */
-    private Flux<String> processCoseStream(Flux<String> resultStream,CodeGenTypeEnum codeGenTypeEnum,Long appId) {
+    private Flux<String> processCoseStream(Flux<String> resultStream,
+                                           CodeGenTypeEnum codeGenTypeEnum,
+                                           Long appId) {
 
         long startTime = System.currentTimeMillis();
         //定义字符串拼接器，用于当流式返回所有代码后保存
@@ -120,9 +122,11 @@ public class AiCodeGeneratorFacade {
                 //保存代码
                 String completeBase= codeBuilder.toString();
                 //执行器解析
-                Object parserResult = CodeParserExecutor.executeParser(completeBase, codeGenTypeEnum);
+                Object parserResult = CodeParserExecutor.
+                        executeParser(completeBase, codeGenTypeEnum);
                 //执行器保存
-                File saveDir= CodeFileSaverExecutor.executeSaver(parserResult, codeGenTypeEnum,appId);
+                File saveDir= CodeFileSaverExecutor.
+                        executeSaver(parserResult, codeGenTypeEnum,appId);
                 //解析代码
                 log.info("创建完成，目录为：{}", saveDir.getAbsolutePath());
             } catch (Exception e) {
@@ -130,6 +134,7 @@ public class AiCodeGeneratorFacade {
             }
         });
     }
+
     /**
      * 将 TokenStream 转换为 Flux<String>，并传递工具调用信息
      *这里是vue项目，由ai调用工具生成文档，所以不需要id
