@@ -10,7 +10,7 @@ import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.aistart.ai.tools.FileWriteTool;
+import org.aistart.ai.tools.*;
 import org.aistart.exception.BusinessException;
 import org.aistart.exception.ErrorCode;
 import org.aistart.model.enums.CodeGenTypeEnum;
@@ -39,6 +39,8 @@ public class AiCodeGeneratorServiceFactory {
     private RedisChatMemoryStore redisChatMemoryStore;
     @Resource
     private ChatHistoryService chatHistoryService;
+    @Resource
+    private ToolManager toolManager;
 
     /**
      * AI 服务实例缓存
@@ -100,7 +102,7 @@ chatHistoryService.loadChatHistoryToMemory(appId, chatMemory,20);
             case VUE_PROJECT -> AiServices.builder(AiCodeGeneratorService.class)
                     .streamingChatModel(reasoningStreamingChatModel)
                     .chatMemoryProvider(memoryId -> chatMemory)
-                    .tools(new FileWriteTool())
+                    .tools(toolManager.getAllTools())
                     .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(//如果工具不存在的处理方式：捏造工具执行结果消息
                             toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
                     ))
