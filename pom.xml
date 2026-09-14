@@ -141,8 +141,15 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <!-- LangGraph4j Studio 后续需要更新 -->
+        <dependency>
+            <groupId>org.bsc.langgraph4j</groupId>
+            <artifactId>langgraph4j-studio-springboot</artifactId>
+            <version>1.6.0-rc2</version>
+        </dependency>
 
-<!--        caffeine,负责本地缓存，目前用来负责ai记忆-->
+
+        <!--        caffeine,负责本地缓存，目前用来负责ai记忆-->
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
