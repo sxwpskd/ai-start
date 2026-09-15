@@ -1,6 +1,5 @@
 package org.aistart.core.handler;
 
-import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
@@ -9,8 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.aistart.ai.model.message.*;
 import org.aistart.ai.tools.BaseTool;
 import org.aistart.ai.tools.ToolManager;
-import org.aistart.constant.AppConstant;
-import org.aistart.core.builder.VueProjectBuilder;
 import org.aistart.model.entity.User;
 import org.aistart.model.enums.ChatHistoryMessageTypeEnum;
 import org.aistart.service.ChatHistoryService;
@@ -23,12 +20,13 @@ import java.util.Set;
 /**
  * JSON 消息流处理器
  * 处理 VUE_PROJECT 类型的复杂流式响应，包含工具调用信息
+ * 异步改同步构建
  */
 @Slf4j
 @Component
 public class JsonMessageStreamHandler {
-@Resource
-private VueProjectBuilder vueProjectBuilder;
+/*@Resource
+private VueProjectBuilder vueProjectBuilder;*/
 @Resource
 private ToolManager toolManager;
 
@@ -59,9 +57,9 @@ private ToolManager toolManager;
                     // 流式响应完成后，添加 AI 消息到对话历史
                     String aiResponse = chatHistoryStringBuilder.toString();
                     chatHistoryService.addChatMessage(appId, aiResponse, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
-                    // 异步构造 Vue 项目
+                    /*// 异步构造 Vue 项目
                     String projectPath = AppConstant.CODE_OUTPUT_ROOT_DIR + "/vue_project_" + appId;
-                    vueProjectBuilder.buildProjectAsync(projectPath);//异步构建
+                    vueProjectBuilder.buildProjectAsync(projectPath);//异步构建*/
                 })
                 .doOnError(error -> {
                     // 如果AI回复失败，也要记录错误消息
