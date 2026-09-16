@@ -3,7 +3,9 @@ package org.aistart.ai.guardrail;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.guardrail.OutputGuardrail;
 import dev.langchain4j.guardrail.OutputGuardrailResult;
-
+/**
+ * 输出护轨，重新生成可能导致无法流式输出
+ * */
 public class RetryOutputGuardrail implements OutputGuardrail {
 
     @Override
