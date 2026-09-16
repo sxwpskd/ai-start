@@ -22,6 +22,8 @@ import org.aistart.model.dto.app.*;
 import org.aistart.model.entity.User;
 import org.aistart.model.enums.CodeGenTypeEnum;
 import org.aistart.model.vo.AppVO;
+import org.aistart.ratelimit.annotation.RateLimit;
+import org.aistart.ratelimit.enums.RateLimitType;
 import org.aistart.service.ProjectDownloadService;
 import org.aistart.service.UserService;
 import org.springframework.cache.annotation.Cacheable;
@@ -69,6 +71,7 @@ public class  AppController {
      * @return 生成结果流
      */
     @GetMapping(value = "/chat/gen/code", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 60, message = "AI 对话请求过于频繁，请稍后再试")
     public Flux<ServerSentEvent<String>> chatToGenCode(@RequestParam Long appId,
                                                        @RequestParam String message,
                                                        HttpServletRequest request) {
