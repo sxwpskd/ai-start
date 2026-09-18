@@ -54,6 +54,17 @@ public interface AiCodeGeneratorService {
     @SystemMessage(fromResource = "prompt/vue-prompt.txt")
     TokenStream generateVueProjectCodeStream(@MemoryId long appId, @UserMessage String userMessage);
 
+    /**
+     * 构思期（BASE）流式对话
+     * AI 通过 writeThink / readThink 工具沉淀与回读构思文档，不直接编写代码
+     *
+     * @param appId       应用 ID（同时作为对话记忆 ID，工具依赖它定位构思文件）
+     * @param userMessage 用户消息
+     * @return 生成过程的流式响应（含工具调用事件）
+     */
+    @SystemMessage(fromResource = "prompt/base-prompt.txt")
+    TokenStream generateBaseThinkStream(@MemoryId long appId, @UserMessage String userMessage);
+
 }
 
 

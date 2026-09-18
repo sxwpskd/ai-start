@@ -27,9 +27,9 @@ public class RedisChatMemoryStoreConfig {
                 .port(port)
                 .password(password)
                 .ttl(ttl);
-        if (StrUtil.isNotBlank(password)) {//如果没有密码，这个会导致报错，无法启动
+        /*if (StrUtil.isNotBlank(password)) {//如果没有密码，这个会导致报错，无法启动
             builder.user("default");
-        }
+        }*/
         return builder.build();
     }
 

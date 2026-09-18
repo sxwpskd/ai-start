@@ -81,8 +81,10 @@ public class AiCodeGeneratorFacade {
         AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId, codeGenTypeEnum);
         return switch (codeGenTypeEnum) {
             case BASE -> {
-                Flux<String> result = aiCodeGeneratorService.generateBaseCodeStream(userMessage);
-                yield  processCoseStream(result, codeGenTypeEnum,appId);
+                // 构思期：走工具调用流，构思文件与渲染由 writeThink 工具内部完成，
+                // 此处不解析、不保存代码（开发文档决策记录第 15 条）
+                TokenStream result = aiCodeGeneratorService.generateBaseThinkStream(appId, userMessage);
+                yield  processThinkTokenStream(result);
             }
             case HTML -> {
                 Flux<String> result = aiCodeGeneratorService.generateHtmlCodeStream(userMessage);
@@ -166,6 +168,43 @@ public class AiCodeGeneratorFacade {
                         // 执行 Vue 项目构建（同步执行，确保预览时项目已就绪）
                         String projectPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + "vue_project_" + appId;
                         vueProjectBuilder.buildProject(projectPath);
+                        sink.complete();
+                    })
+                    .onError((Throwable error) -> {
+                        error.printStackTrace();
+                        sink.error(error);
+                    })
+                    .start();
+        });
+    }
+
+    /**
+     * 构思期（BASE）TokenStream 转换：仅透传 AI 响应与工具事件
+     * 构思文件落盘与 HTML 渲染均在 writeThink 工具内部完成，此处不做任何构建/保存；
+     * 与 processTokenStream 的区别：onCompleteResponse 不触发 Vue 项目构建
+     * （BASE 期不存在 vue_project_{appId} 目录，开发文档决策记录第 15 条）
+     *
+     * @param tokenStream TokenStream 对象
+     * @return Flux<String> 流式响应
+     */
+    private Flux<String> processThinkTokenStream(TokenStream tokenStream) {
+        return Flux.create(sink -> {
+            tokenStream.onPartialResponse((String partialResponse) -> {
+                        AiResponseMessage aiResponseMessage =
+                                new AiResponseMessage(partialResponse);
+                        sink.next(JSONUtil.toJsonStr(aiResponseMessage));
+                    }) //获取ai调用工具的流输出
+                    .onPartialToolExecutionRequest((index, toolExecutionRequest) -> {
+                        ToolRequestMessage toolRequestMessage =
+                                new ToolRequestMessage(toolExecutionRequest);
+                        sink.next(JSONUtil.toJsonStr(toolRequestMessage));
+                    })//获取ai调用工具的结果
+                    .onToolExecuted((ToolExecution toolExecution) -> {
+                        ToolExecutedMessage toolExecutedMessage =
+                                new ToolExecutedMessage(toolExecution);
+                        sink.next(JSONUtil.toJsonStr(toolExecutedMessage));
+                    })//调用完成
+                    .onCompleteResponse((ChatResponse response) -> {
                         sink.complete();
                     })
                     .onError((Throwable error) -> {

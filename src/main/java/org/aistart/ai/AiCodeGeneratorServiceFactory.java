@@ -118,6 +118,21 @@ public class AiCodeGeneratorServiceFactory {
                         .chatMemory(chatMemory)
                         .build();
             }
+            case BASE -> {
+                // 构思期：流式模型（构思对话无需推理模型）+ 仅构思双工具
+                // 注意：不可照抄 VUE_PROJECT 的 getAllTools()，否则文件类工具会被注册，
+                // AI 在构思期即可编写代码，破坏"只构思"边界（开发文档决策记录第 15 条）
+                StreamingChatModel openAiStreamingChatModel = SpringContextUtil
+                        .getBean("streamingChatModelPrototype", StreamingChatModel.class);
+                yield AiServices.builder(AiCodeGeneratorService.class)
+                        .streamingChatModel(openAiStreamingChatModel)
+                        .chatMemoryProvider(memoryId -> chatMemory)
+                        .tools(toolManager.getTool("writeThink"), toolManager.getTool("readThink"))
+                        .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
+                                toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
+                        ))
+                        .build();
+            }
             default -> throw new BusinessException(ErrorCode.SYSTEM_ERROR,
                     "不支持的代码生成类型: " + codeGenType.getValue());
         };

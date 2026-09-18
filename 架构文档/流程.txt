@@ -1,0 +1,225 @@
+# 业务流程：数据流转与状态机（行为层 · 【现有】与【目标】对照）
+
+更新时间：2026-09-18（09-17 文档体系重构；09-18 增补可视化编辑闭环与 readThink 双工具）
+关联文档：架构文档/当前对项目架构的整理与理解.txt（架构基准）、
+架构文档/当前目标.txt（战略层 · 阶段目标）、
+架构文档/开发文档.txt（执行+验收层 · 决策记录）
+
+======================================================================
+## 〇、文档体系与可信度（2026-09-17 确立）
+======================================================================
+
+| 文件 | 层次 | 回答的问题 | 可信度与更新节奏 |
+|---|---|---|---|
+| 当前对项目架构的整理与理解.txt | 架构基准层 | 代码库是什么 | 最高；变更最少，里程碑后对照代码校验 |
+| 当前目标.txt | 战略层 | 本阶段做什么、为什么 | 意图快照，过期最快；阶段切换时重写 |
+| 流程.txt（本文档） | 行为层 | 现在怎么跑、之后该怎么跑 | 【现有】须随代码同步，脱节即失真 |
+| 开发文档.txt | 执行+验收层 | 具体怎么做、做到什么算完 | 决策与实施顺序唯一归属；完成后逐条核对 |
+
+分工红线：决策只住 开发文档.txt；目标意图只住 当前目标.txt；流程对照只住本文档；
+长期事实只住架构基准。内容冲突时仲裁顺序：代码 > 开发文档.txt 决策 > 其他文档。
+
+阅读前提（决策摘要，依据与细节见 开发文档.txt 决策记录）：
+1. codeGenType = 阶段 + 策略：BASE=构思期，HTML/MULTI_FILE/VUE_PROJECT=生成期（无 DB 迁移）
+2. 双通道：前端"工作流开关"决定走 图编排（同步阻塞，不做 SSE 流式）/
+   直连流式（现有 AiService 链路，rag/think 以 @Tool 工具形式被 AI 调用）；
+   由此消除原方案最大难题"工作流节点内实时流式透传"
+3. RAG 相关整体搁置（2026-09-17）：本文 rag 环节为最终蓝图，
+   实施时先留空位，搁置恢复后补挂
+4. BASE 构思纠正双入口（2026-09-18）：口头对话 / 预览页点选（元素转文字进消息）；
+   think 工具 = writeThink（全量覆盖写）+ readThink（读全文）双工具；
+   元素→md 章节映射由 AI 智能完成，不做字符串替换（闭环见 3.6）
+
+======================================================================
+# 一、核心状态机与通道矩阵
+======================================================================
+
+## 1.1 阶段状态机
+
+```
+[BASE（构思期）] ──点击"生成代码"──> [HTML / MULTI_FILE / VUE_PROJECT（生成期）]
+   │ 多轮构思对话                      │ 多轮改码对话（现有行为，不动）
+   └── 状态单向；回构思需重置（暂不做）
+```
+
+## 1.2 通道矩阵（目标）
+
+| 请求场景 | 工作流开关 = 开 | 工作流开关 = 关（直连） |
+|---|---|---|
+| BASE 期构思对话 | base 工作流（rag 节点 → think 节点），同步阻塞返回 | 流式输出 + AI 自主调用 ragSearch / writeThink / readThink 工具 |
+| 点击"生成代码" | 生成图（AI 路由 → rag → 读 think → 生成 → 质检重试 → 构建），同步阻塞返回 | 用户手选 CodeType → update → 现有生成分支（rag/think 工具可用） |
+| 生成后改码对话 | 始终直连流式（现有行为，不进图） | 同左 |
+
+两通道共同产物链：writeThink 全量覆盖写 think_{appId}.md（工具内同步渲染
+index.html）→ tmp/code_output/base_{appId}/ 目录 → 前端预览浏览器展示
+
+说明：
+- 直连模式下 BASE 期的工具调用流式事件已有基础设施（VUE_PROJECT 模式 +
+  覆盖的 TokenStream 源码已支持工具调用事件流），改动最小
+- 工作流模式下 BASE 期同步阻塞：用户发消息 → 等 rag+think 跑完 → 一次性返回 +
+  预览刷新（构思阶段耗时约几十秒，可接受）
+- 生成图模式下同步阻塞耗时可能数分钟（含 npm 构建），需超时配置保障
+  （已定：Nginx 600s + 前端 10min + 生成中防重，见 开发文档.txt 决策记录第 8 条）
+
+======================================================================
+# 二、【现有】流程实录（当前代码库真实行为）
+======================================================================
+
+## 2.1 应用生命周期
+
+```
+[创建] --多轮对话生码--> [代码已生成] --部署--> [已部署]
+  +--任意状态可删除(级联删除对话历史)
+```
+
+两个关键代码事实（低风险重构依据）：
+- 事实1：创建时 AI 路由结果只 log 未落库（AppServiceImpl.createApp）——"创建时定
+  codeGenType"实际未生效，挪到点击"生成代码"时处理属于修复隐患
+- 事实2：工厂 createAiCodeGeneratorService 的 switch 无 BASE 分支（会抛不支持），
+  Facade/Parser/Saver 的 BASE 分支走不通——BASE 是半死代码，可安全重定义
+
+## 2.2 对话生成代码（GET /app/chat/gen/code，SSE）
+
+```
+用户消息 → AppController（登录校验 + @RateLimit USER 5次/60s）
+  → AppServiceImpl.chatToGenCode（仅创建者）
+  → chatHistoryService.addChatMessage（USER 消息落库）
+  → AiCodeGeneratorFacade.generateAndSaveCodeStream
+      → 工厂：Caffeine 缓存 (appId+codeGenType)；创建时 Redis 记忆(窗口20) + DB 回灌
+        （VUE_PROJECT：prototype 多例模型 + ToolManager 工具 + 防幻觉策略）
+      → 流式响应：
+          - HTML/MULTI_FILE：Flux 直出；完成后聚合 → 解析 → 保存
+          - VUE_PROJECT：TokenStream，AI 调文件工具写项目；完成后 npm 构建
+  → StreamHandlerExecutor（AI 响应落库）→ 前端 done 事件
+```
+
+## 2.3 对话记忆（双轨）
+
+写：消息 → DB chat_history（全量）+ ChatMemory（Redis，窗口20）
+读：创建 AiService 时 DB 最近 N 条按时间正序回灌；隔离：memoryId = appId
+
+## 2.4 部署 / 预览 / 下载
+
+```
+部署：deployApp → 6位 deployKey → VUE 则构建 dist → 复制到 tmp/code_deploy/{deployKey}
+      → 更新库 → 返回 URL → 虚拟线程异步截图 → COS → 更新 cover
+预览：StaticResourceController → tmp/code_output/{deployKey}/**（.txt 返回 octet-stream）
+下载：/app/download/{appId} → ZIP 文件流
+```
+
+## 2.5 LangGraph 演示工作流（/workflow/*，独立链路，未接主业务）
+
+```
+image_collector → prompt_enhancer → router → code_generator(appId=0L, blockLast)
+  → code_quality_check → 条件边（fail 重试 / build / skip）→ project_builder
+```
+仅 step 级事件；无记忆、未接主业务。目标方案将其转正为工作流通道的两张图。
+
+======================================================================
+# 三、【目标】流程详述
+======================================================================
+
+## 3.1 BASE 期 · 直连通道（流式 + 工具）
+
+```
+用户消息（codeGenType=BASE，SSE；口头纠正或预览页点选元素转文字，见 3.6）
+  → chatToGenCode BASE 分支 → 工厂 BASE 分支新增：构建带工具的 AiService
+    （照 VUE_PROJECT 模式：流式模型 + 注册 ragSearch / writeThink / readThink）
+  → AI 流式输出；构思实质更新时调 writeThink（全量覆盖写 think_{appId}.md，
+    工具内同步渲染 index.html）；需回看现状时调 readThink 取全文
+    （长对话下 Redis 记忆窗口20会淘汰最初全文，readThink 兜底）
+  → 前端收工具事件后刷新预览
+  → AI 响应落库（StreamHandlerExecutor 复用）
+```
+
+## 3.2 BASE 期 · 工作流通道（同步阻塞）
+
+```
+用户消息 → base 工作流：
+    START → rag 节点（检索注入提示词）→ think 节点（构思生成 + 调
+    ThinkFileUtils：读当前文档 + 全量覆盖写 + 渲染）→ END
+  → 虚拟线程执行，跑完一次性返回结果 + 预览刷新
+```
+
+## 3.3 点击"生成代码" · 直连通道
+
+```
+前端按钮 → 生成触发接口 → 用户手选 CodeType → update App.codeGenType
+  → 读取 think 文件 + （可选）RAG 结果拼接增强提示词
+  → 走现有 chatToGenCode 生成分支（rag/think 工具仍可被 AI 调用）
+```
+
+## 3.4 点击"生成代码" · 工作流通道
+
+```
+前端按钮 → 生成触发接口 → 生成图（虚拟线程执行，同步阻塞返回）：
+    START → RouterNode（AI 路由选型，结果落库 update codeGenType）
+      → rag 节点 → 读 think 节点
+      → image_plan → 并行搜集×4 → aggregator（可选，沿用并发图）
+      → code_generator → code_quality_check
+            ├─ fail → code_generator（带修复提示词重试）
+            └─ pass → project_builder → END
+  → 返回最终 WorkflowContext（生成目录、质检结果等）
+```
+
+## 3.5 rag / think 双形态（底层共享）
+
+```
+RagService（检索：embedding + 向量库 + 语料）
+  ├── RagTool（@Tool，直连通道，AI 自主调用）
+  └── RagNode（langgraph4j 节点，工作流通道）
+ThinkFileUtils（saveThink：md 全量覆盖写 + 同步渲染 index.html；
+               readThink：读当前全文）
+  ├── WriteThinkTool / ReadThinkTool（@Tool，直连通道）
+  └── ThinkNode（langgraph4j 节点，工作流通道，直接调 utils 不经工具类）
+```
+
+## 3.6 BASE 期可视化编辑闭环（2026-09-18 定稿）
+
+复用现有生成期可视化编辑机制（visualEditor.ts 注入 + postMessage），
+前端零改造，仅放开 BASE 期编辑模式入口：
+
+```
+think 页（md 渲染视图）──用户点选──> getElementInfo 采集
+    {tagName, id, className, selector, textContent(前100字), pagePath, rect}
+  → 拼进用户消息（实际只用：页面路径 / 标签 / 选择器 / 当前内容前100字；
+    无 outerHTML，元素信息只是定位线索）
+  → AI 调 readThink 取当前全文
+  → 按标签+内容定位 md 章节（h2 + "二、应用场景" → ## 二、应用场景），
+    整体调整（跨章节联动一致由全量重写保证）
+  → writeThink 全量覆盖 → 工具内自动重渲染 → 前端收工具事件刷新预览
+```
+
+前端代码核实事实（2026-09-18，ai-start-frontend 仓库）：
+- payload 为结构化定位信息而非元素源码——生成期同理，AI 收线索、自行读源
+- F1 工作流开关已实现（AppChatPage.vue：workflowStore 分流 + toast 占位）
+
+======================================================================
+# 四、现有 vs 目标对照表
+======================================================================
+
+| 环节 | 【现有】 | 【目标】 |
+|---|---|---|
+| codeGenType 语义 | 生成策略（创建时路由，实际未落库） | 阶段+策略：BASE=构思期 |
+| BASE 分支 | 半死代码 | 双通道：直连流式+工具 / base 工作流同步 |
+| 工作流 | 演示链路（appId=0、无记忆） | 转正为工作流通道（appId/记忆打通、同步阻塞） |
+| 流式输出 | 仅直连链路有 | 直连通道全部承接；工作流通道不流式 |
+| RAG | 无 | 双形态：RagTool + RagNode，共享 RagService |
+| think 文件 | 无 | 双形态：WriteThinkTool/ReadThinkTool + ThinkNode；工具内渲染 HTML |
+| 可视化编辑 | 仅生成期（点选元素改代码） | 生成期不变；BASE 期点选元素改 md（机制复用） |
+| 生成触发 | 不存在 | 双通道接口（用户选型直连 / AI 路由工作流） |
+| 改码对话 | 现有多轮生成 | 不变（恒直连） |
+
+======================================================================
+# 五、关键数据实体（目标新增）
+======================================================================
+
+- think_{appId}.md：AI 经 writeThink 全量覆盖写（会话 id = appId，已确认）；
+  存于 tmp/code_output/base_{appId}/think_{appId}.md；readThink 读全文
+  （记忆窗口淘汰兜底 + 点选纠正时取现状）
+- think 渲染 HTML：后端渲染产物，同目录，命名 index.html（复用目录默认页逻辑）；
+  模板 src/main/resources/template/think-template.html（定稿见 开发文档.txt B3）
+- RAG 向量库：语料/ 导入（约160个md）；embedding 选型随 RAG 搁置
+  （倾向 DashScope + InMemory，见 开发文档.txt 决策记录第 9 条）
+- App.codeGenType：新增 BASE 期语义（枚举值已存在，无需迁移）
+- 前端"工作流开关"按钮（F1 已实现）+ "生成代码"按钮（F2 待实现）

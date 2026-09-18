@@ -3,7 +3,7 @@
 application-local.yml
 application-prod.yml
 tmp
-
+语料/
 HELP.md
 target/
 .mvn/wrapper/maven-wrapper.jar
@@ -37,3 +37,5 @@ build/
 
 ### VS Code ###
 .vscode/
+/语料/
+/语料/

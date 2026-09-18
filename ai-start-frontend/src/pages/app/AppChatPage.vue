@@ -120,7 +120,7 @@
                 :rows="4"
                 :maxlength="1000"
                 @keydown.enter.prevent="sendMessage"
-                :disabled="isGenerating || !isOwner"
+                :disabled="workflowStore.generating || !isOwner"
               />
             </a-tooltip>
             <a-textarea
@@ -130,13 +130,33 @@
               :rows="4"
               :maxlength="1000"
               @keydown.enter.prevent="sendMessage"
-              :disabled="isGenerating"
+              :disabled="workflowStore.generating"
             />
             <div class="input-actions">
+              <!-- F2 生成代码按钮（显示条件：开关=关 && 构思期） -->
+              <a-button
+                v-if="showGenCodeButton"
+                size="small"
+                :disabled="workflowStore.generating || !isOwner"
+                @click="openCodeGenModal"
+              >
+                生成代码
+              </a-button>
+              <!-- F1 工作流开关 -->
+              <div class="workflow-switch">
+                <span class="workflow-switch-label">工作流</span>
+                <a-switch
+                  size="small"
+                  :checked="workflowStore.workflowEnabled"
+                  :disabled="workflowStore.generating"
+                  @change="onWorkflowSwitchChange"
+                />
+              </div>
+              <!-- 发送 -->
               <a-button
                 type="primary"
                 @click="sendMessage"
-                :loading="isGenerating"
+                :loading="workflowStore.generating"
                 :disabled="!isOwner"
               >
                 <template #icon>
@@ -174,11 +194,11 @@
           </div>
         </div>
         <div class="preview-content">
-          <div v-if="!previewUrl && !isGenerating" class="preview-placeholder">
+          <div v-if="!previewUrl && !workflowStore.generating" class="preview-placeholder">
             <div class="placeholder-icon">🌐</div>
             <p>网站文件生成完成后将在这里展示</p>
           </div>
-          <div v-else-if="isGenerating" class="preview-loading">
+          <div v-else-if="workflowStore.generating" class="preview-loading">
             <a-spin size="large" />
             <p>正在生成网站...</p>
           </div>
@@ -208,6 +228,22 @@
       :deploy-url="deployUrl"
       @open-site="openDeployedSite"
     />
+
+    <!-- F2：选择代码生成类型弹窗（三选一，必选；取消=留构思期） -->
+    <a-modal
+      v-model:open="codeGenModalVisible"
+      title="选择代码生成类型"
+      ok-text="开始生成"
+      cancel-text="取消"
+      :ok-button-props="{ disabled: !selectedCodeGenType }"
+      @ok="confirmCodeGen"
+    >
+      <a-radio-group v-model:value="selectedCodeGenType" class="code-type-radio-group">
+        <a-radio v-for="opt in genTypeOptions" :key="opt.value" :value="opt.value">
+          {{ opt.label }}
+        </a-radio>
+      </a-radio-group>
+    </a-modal>
   </div>
 </template>
 
@@ -216,13 +252,14 @@ import { ref, onMounted, nextTick, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { useLoginUserStore } from '@/stores/loginUser'
+import { useWorkflowStore } from '@/stores/workflow'
 import {
   getAppVoById,
   deployApp as deployAppApi,
   deleteApp as deleteAppApi,
 } from '@/api/appController'
 import { listAppChatHistory } from '@/api/chatHistoryController'
-import { CodeGenTypeEnum, formatCodeGenType } from '@/utils/codeGenTypes'
+import { CODE_GEN_TYPE_OPTIONS, CodeGenTypeEnum, formatCodeGenType } from '@/utils/codeGenTypes'
 import request from '@/request'
 
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
@@ -244,6 +281,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const loginUserStore = useLoginUserStore()
+const workflowStore = useWorkflowStore()
 
 // 应用信息
 const appInfo = ref<API.AppVO>()
@@ -259,8 +297,14 @@ interface Message {
 
 const messages = ref<Message[]>([])
 const userInput = ref('')
-const isGenerating = ref(false)
 const messagesContainer = ref<HTMLElement>()
+
+// F2 生成代码相关：弹窗可见性、已选类型、三选一选项（排除 BASE）
+const codeGenModalVisible = ref(false)
+const selectedCodeGenType = ref<CodeGenTypeEnum>()
+const genTypeOptions = CODE_GEN_TYPE_OPTIONS.filter(
+  (opt) => opt.value !== CodeGenTypeEnum.BASE
+)
 
 // 对话历史相关
 const loadingHistory = ref(false)
@@ -297,6 +341,11 @@ const isOwner = computed(() => {
 const isAdmin = computed(() => {
   return loginUserStore.loginUser.userRole === 'admin'
 })
+
+// F2 生成代码按钮显示条件：开关=关 && 构思期（appMode 由 codeGenType 派生，空=BASE）
+const showGenCodeButton = computed(
+  () => !workflowStore.workflowEnabled && workflowStore.appMode === 'BASE'
+)
 
 // 应用详情相关
 const appDetailVisible = ref(false)
@@ -375,6 +424,8 @@ const fetchAppInfo = async () => {
     const res = await getAppVoById({ id: id as unknown as number })
     if (res.data.code === 0 && res.data.data) {
       appInfo.value = res.data.data
+      // 同步当前应用 codeGenType（驱动 appMode / F2 按钮显隐）
+      workflowStore.setAppCodeGenType(appInfo.value.codeGenType)
 
       // 先加载对话历史
       await loadChatHistory()
@@ -405,6 +456,12 @@ const fetchAppInfo = async () => {
 
 // 发送初始消息
 const sendInitialMessage = async (prompt: string) => {
+  // F1：工作流开关=开 → 新通道占位（B6/B7 后接入）
+  if (workflowStore.workflowEnabled) {
+    message.info('工作流待转正')
+    return
+  }
+
   // 添加用户消息
   messages.value.push({
     type: 'user',
@@ -423,17 +480,23 @@ const sendInitialMessage = async (prompt: string) => {
   scrollToBottom()
 
   // 开始生成
-  isGenerating.value = true
+  workflowStore.generating = true
   await generateCode(prompt, aiMessageIndex)
 }
 
 // 发送消息
 const sendMessage = async () => {
-  if (!userInput.value.trim() || isGenerating.value) {
+  if (!userInput.value.trim() || workflowStore.generating) {
     return
   }
 
-  let message = userInput.value.trim()
+  // F1：工作流开关=开 → 新通道占位（B6/B7 后接入）
+  if (workflowStore.workflowEnabled) {
+    message.info('工作流待转正')
+    return
+  }
+
+  let sendContent = userInput.value.trim()
   // 如果有选中的元素，将元素信息添加到提示词中
   if (selectedElementInfo.value) {
     let elementContext = `\n\n选中元素信息：`
@@ -444,13 +507,13 @@ const sendMessage = async () => {
     if (selectedElementInfo.value.textContent) {
       elementContext += `\n- 当前内容: ${selectedElementInfo.value.textContent.substring(0, 100)}`
     }
-    message += elementContext
+    sendContent += elementContext
   }
   userInput.value = ''
   // 添加用户消息（包含元素信息）
   messages.value.push({
     type: 'user',
-    content: message,
+    content: sendContent,
   })
 
   // 发送消息后，清除选中元素并退出编辑模式
@@ -473,12 +536,16 @@ const sendMessage = async () => {
   scrollToBottom()
 
   // 开始生成
-  isGenerating.value = true
-  await generateCode(message, aiMessageIndex)
+  workflowStore.generating = true
+  await generateCode(sendContent, aiMessageIndex)
 }
 
-// 生成代码 - 使用 EventSource 处理流式响应
-const generateCode = async (userMessage: string, aiMessageIndex: number) => {
+// 生成代码 - 使用 EventSource 处理流式响应（F2 生成触发时携带 codeGenType 参数）
+const generateCode = async (
+  userMessage: string,
+  aiMessageIndex: number,
+  codeGenType?: CodeGenTypeEnum
+) => {
   let eventSource: EventSource | null = null
   let streamCompleted = false
 
@@ -491,6 +558,10 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
       appId: appId.value || '',
       message: userMessage,
     })
+    // F2：生成触发时携带用户选中的代码生成类型（构思期选择的目标模式）
+    if (codeGenType) {
+      params.set('codeGenType', codeGenType)
+    }
 
     const url = `${baseURL}/app/chat/gen/code?${params}`
 
@@ -528,7 +599,7 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
       if (streamCompleted) return
 
       streamCompleted = true
-      isGenerating.value = false
+      workflowStore.generating = false
       eventSource?.close()
 
       // 延迟更新预览，确保后端已完成处理
@@ -553,7 +624,7 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
         message.error(errorMessage)
 
         streamCompleted = true
-        isGenerating.value = false
+        workflowStore.generating = false
         eventSource?.close()
       } catch (parseError) {
         console.error('解析错误事件失败:', parseError, '原始数据:', event.data)
@@ -563,11 +634,11 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
 
     // 处理错误
     eventSource.onerror = function () {
-      if (streamCompleted || !isGenerating.value) return
+      if (streamCompleted || !workflowStore.generating) return
       // 检查是否是正常的连接关闭
       if (eventSource?.readyState === EventSource.CONNECTING) {
         streamCompleted = true
-        isGenerating.value = false
+        workflowStore.generating = false
         eventSource?.close()
 
         setTimeout(async () => {
@@ -590,7 +661,52 @@ const handleError = (error: unknown, aiMessageIndex: number) => {
   messages.value[aiMessageIndex].content = '抱歉，生成过程中出现了错误，请重试。'
   messages.value[aiMessageIndex].loading = false
   message.error('生成失败，请重试')
-  isGenerating.value = false
+  workflowStore.generating = false
+}
+
+// F1：工作流开关切换（全局持久化；切换不清空会话）
+const onWorkflowSwitchChange = (checked: boolean | string | number) => {
+  workflowStore.setWorkflowEnabled(Boolean(checked))
+}
+
+// F2：打开生成代码类型弹窗
+const openCodeGenModal = () => {
+  codeGenModalVisible.value = true
+}
+
+// F2：确认生成 → 复用现有 SSE 请求（仅多带 codeGenType 参数）
+const confirmCodeGen = async () => {
+  if (!selectedCodeGenType.value || workflowStore.generating) {
+    return
+  }
+  codeGenModalVisible.value = false
+  await startGenerateCode(selectedCodeGenType.value)
+}
+
+// F2：触发生成（固定文案；后端读 think 拼接增强提示词，成功后锁定 codeGenType）
+const startGenerateCode = async (codeGenType: CodeGenTypeEnum) => {
+  const fixedMessage = '请根据以上构思，生成代码'
+
+  // 添加用户消息（固定文案）
+  messages.value.push({
+    type: 'user',
+    content: fixedMessage,
+  })
+
+  // 添加AI消息占位符
+  const aiMessageIndex = messages.value.length
+  messages.value.push({
+    type: 'ai',
+    content: '',
+    loading: true,
+  })
+
+  await nextTick()
+  scrollToBottom()
+
+  // 开始生成
+  workflowStore.generating = true
+  await generateCode(fixedMessage, aiMessageIndex, codeGenType)
 }
 
 // 更新预览
@@ -768,6 +884,8 @@ onMounted(() => {
 // 清理资源
 onUnmounted(() => {
   // EventSource 会在组件卸载时自动清理
+  // 重置请求状态，避免全局 generating 残留影响其他页面
+  workflowStore.generating = false
 })
 </script>
 
@@ -903,13 +1021,38 @@ onUnmounted(() => {
 }
 
 .input-wrapper .ant-input {
-  padding-right: 50px;
+  /* 右侧预留操作区宽度（生成代码/工作流开关/发送），避免输入文字被遮挡 */
+  padding-right: 200px;
 }
 
 .input-actions {
   position: absolute;
   bottom: 8px;
   right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* F1 工作流开关 */
+.workflow-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workflow-switch-label {
+  font-size: 12px;
+  color: #666;
+  white-space: nowrap;
+}
+
+/* F2 生成类型弹窗选项（纵向三选一） */
+.code-type-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
 }
 
 /* 右侧预览区域 */

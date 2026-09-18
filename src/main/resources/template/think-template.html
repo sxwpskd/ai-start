@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>项目构思</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 32px 20px 64px;
+            background: #f5f6f8;
+            color: #1f2329;
+            font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC",
+            "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            font-size: 15px;
+            line-height: 1.75;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .think-container {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 40px 48px;
+            background: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.05);
+        }
+
+        /* 标题 */
+        h1, h2, h3, h4, h5, h6 {
+            margin: 1.6em 0 0.6em;
+            font-weight: 600;
+            line-height: 1.4;
+            color: #1f2329;
+        }
+
+        h1:first-child, h2:first-child, h3:first-child {
+            margin-top: 0;
+        }
+
+        h1 {
+            font-size: 26px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #e5e6eb;
+        }
+
+        h2 {
+            font-size: 21px;
+            padding-left: 12px;
+            border-left: 4px solid #3370ff;
+        }
+
+        h3 {
+            font-size: 17px;
+        }
+
+        h4, h5, h6 {
+            font-size: 15px;
+            color: #4e5969;
+        }
+
+        /* 段落与内联元素 */
+        p {
+            margin: 0.8em 0;
+        }
+
+        a {
+            color: #3370ff;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        strong {
+            font-weight: 600;
+            color: #1f2329;
+        }
+
+        em {
+            font-style: italic;
+            color: #4e5969;
+        }
+
+        hr {
+            margin: 2em 0;
+            border: none;
+            border-top: 1px solid #e5e6eb;
+        }
+
+        /* 列表 */
+        ul, ol {
+            margin: 0.8em 0;
+            padding-left: 1.8em;
+        }
+
+        li {
+            margin: 0.35em 0;
+        }
+
+        li > ul, li > ol {
+            margin: 0.35em 0;
+        }
+
+        /* 行内代码 */
+        code {
+            padding: 2px 6px;
+            background: #f2f3f5;
+            border-radius: 4px;
+            font-family: "JetBrains Mono", Consolas, Monaco, "Courier New", monospace;
+            font-size: 0.88em;
+            color: #d4380d;
+        }
+
+        /* 代码块 */
+        pre {
+            margin: 1em 0;
+            padding: 16px 20px;
+            background: #f7f8fa;
+            border: 1px solid #e5e6eb;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+
+        pre code {
+            display: block;
+            padding: 0;
+            background: none;
+            color: #1f2329;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre;
+        }
+
+        /* 引用 */
+        blockquote {
+            margin: 1em 0;
+            padding: 8px 18px;
+            border-left: 4px solid #c9cdd4;
+            background: #f7f8fa;
+            color: #4e5969;
+            border-radius: 0 6px 6px 0;
+        }
+
+        blockquote p {
+            margin: 0.4em 0;
+        }
+
+        /* 表格 */
+        table {
+            width: 100%;
+            margin: 1.2em 0;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        th, td {
+            padding: 10px 14px;
+            border: 1px solid #e5e6eb;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            background: #f7f8fa;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        tbody tr:nth-child(even) {
+            background: #fafbfc;
+        }
+
+        /* 图片 */
+        img {
+            max-width: 100%;
+            border-radius: 6px;
+        }
+
+        /* 空内容提示 */
+        .think-container:empty::after {
+            content: "暂无构思内容";
+            display: block;
+            padding: 40px 0;
+            text-align: center;
+            color: #86909c;
+        }
+
+        /* 窄屏适配 */
+        @media (max-width: 640px) {
+            body {
+                padding: 16px 10px 40px;
+            }
+
+            .think-container {
+                padding: 24px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="think-container">${CONTENT}</div>
+</body>
+</html>

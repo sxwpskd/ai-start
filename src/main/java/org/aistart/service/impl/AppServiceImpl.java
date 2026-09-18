@@ -166,11 +166,15 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         if (!app.getUserId().equals(loginUser.getId())) {
             throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限访问该应用");
         }
-        // 4. 获取应用的代码生成类型
+        // 4. 获取应用的代码生成类型（空值兜底为 BASE：历史应用视为构思期，兼容旧数据）
         String codeGenTypeStr = app.getCodeGenType();
         CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(codeGenTypeStr);
         if (codeGenTypeEnum == null) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
+            if (StrUtil.isBlank(codeGenTypeStr)) {
+                codeGenTypeEnum = CodeGenTypeEnum.BASE;
+            } else {
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
+            }
         }
         // 5. 通过校验后，添加用户消息到对话历史
         chatHistoryService.addChatMessage(appId, message, ChatHistoryMessageTypeEnum.USER.getValue(), loginUser.getId());
@@ -246,11 +250,11 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         ThrowUtils.throwIf(!updateResult, ErrorCode.OPERATION_ERROR, "更新应用部署信息失败");
 
         // 10. 构建应用访问 URL
-        /*测试环境
+        /*测试环境*/
         String appDeployUrl = String.format("%s/%s/", AppConstant.CODE_DEPLOY_HOST, deployKey);
-        */
+        /*/
         /* 生产环境*/
-        String appDeployUrl = String.format("%s/%s/", deployHost, deployKey);
+        //String appDeployUrl = String.format("%s/%s/", deployHost, deployKey);
 
         // 11. 异步生成截图并更新应用封面
         generateAppScreenshotAsync(appId, appDeployUrl);
