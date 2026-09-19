@@ -131,6 +131,19 @@ public class ThinkFileUtils {
     }
 
     /**
+     * 判断构思文档是否已创建（仅供生成触发前的存在性预检使用）
+     *
+     * @param appId 应用 id（即会话 id）
+     * @return 构思源文件存在返回 true
+     */
+    public static boolean existsThink(Long appId) {
+        if (appId == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "应用 id 不能为空");
+        }
+        return getThinkFile(appId).exists();
+    }
+
+    /**
      * 构建构思产物所在目录名，与代码生成产物命名规则一致：{codeGenType}_{appId}
      */
     private static String getThinkDirName(Long appId) {

@@ -109,6 +109,18 @@ public class WorkflowContext implements Serializable {//支持序列化
     private String thinkReply;
 
     /**
+     * 生成期工作流开始时读入的构思文档全文
+     * 独立字段，不并入 originalPrompt——RouterNode 拿它做 AI 路由，
+     * 拼入构思全文会污染路由提示词；think 文件不存在时为空
+     */
+    private String thinkContext;
+
+    /**
+     * 生成期工作流本轮产出的 AI 回复全文（全图成功后由服务层落库）
+     */
+    private String genReply;
+
+    /**
      * 错误信息
      */
     private String errorMessage;

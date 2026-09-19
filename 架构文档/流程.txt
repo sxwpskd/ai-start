@@ -1,6 +1,8 @@
 # 业务流程：数据流转与状态机（行为层 · 【现有】与【目标】对照）
 
-更新时间：2026-09-19（B6 构思工作流通道编码完成：新增 2.6 流程实录、3.2 标注
+更新时间：2026-09-19（B7 生成工作流通道后端编码完成：新增 2.7 流程实录、3.4
+标注后端已实现、通道矩阵与对照表同步；决策见 开发文档.txt 决策记录第 21~27 条）
+（前次 2026-09-19：B6 构思工作流通道编码完成：新增 2.6 流程实录、3.2 标注
 已实现、通道矩阵与对照表同步；决策见 开发文档.txt 决策记录第 18/19/20 条）
 （前次 2026-09-18：09-17 文档体系重构；增补可视化编辑闭环与 readThink 双工具、
 BASE 模式认知澄清：阶段为体感、实现为等价模式，见 开发文档.txt 决策记录第 16 条、
@@ -58,7 +60,7 @@ codeGenType 值 + 成功后落库时机 + 前端按钮显隐涌现（开发文�
 | 请求场景 | 工作流开关 = 开 | 工作流开关 = 关（直连） |
 |---|---|---|
 | BASE 期构思对话 | base 工作流（rag 占位 → think 节点），同步阻塞返回【B6 已编码待联调】 | 流式输出 + AI 自主调用 writeThink / readThink 工具【已实现（B4）】 |
-| 点击"生成代码" | 生成图（AI 路由 → rag → 读 think → 生成 → 质检重试 → 构建），同步阻塞返回【B7；rag 插槽已预埋】 | 用户手选 CodeType → update → 现有生成分支【已实现（B5）】 |
+| 点击"生成代码" | 生成图（AI 路由 → rag → 读 think → 生成 → 质检重试 → 构建），SSE 进度推送【B7 后端已编码待联调；前端接线未做】 | 用户手选 CodeType → update → 现有生成分支【已实现（B5）】 |
 | 生成后改码对话 | 始终直连流式（现有行为，不进图） | 同左 |
 
 两通道共同产物链：writeThink 全量覆盖写 think_{appId}.md（工具内同步渲染
@@ -160,6 +162,39 @@ image_collector → prompt_enhancer → router → code_generator(appId=0L, bloc
 双图定稿（决策记录第 18 条）：构思图与生成图独立，共用 WorkflowContext /
 Executor 骨架 / 节点编写模式。
 
+## 2.7 生成工作流通道（B7，2026-09-19 后端编码完成，前端接线与联调验收待做）
+
+```
+用户触发生成（开关=开；按钮固定文案 / 前端口令识别 / 直创应用初始需求）
+  → GET /app/gen/workflow?appId=&message=（SSE，SseEmitter(0L) 立即返回）
+  → AppServiceImpl.genWorkflow 同步段（请求线程）：参数校验 → 仅创建者鉴权 →
+    codeGenType 空值兜底 BASE / 非法值抛错（异常由全局处理器按 Accept 头转
+    business-error 事件）
+  → GenWorkflowExecutor.submit（虚拟线程；加锁与解锁必须同线程，决策记录第 27 条）：
+      tryLock(gen_workflow:lock:{appId}) 不等待，失败抛"应用正在生成中"
+      ①先落用户消息（时序硬约束同 2.6，决策记录第 20 条）
+      ②existsThink 为真则 readThink 入 context.thinkContext（不存在置空不拼）
+      ③初始上下文：originalPrompt = App.initPrompt（路由依据，决策记录第 25 条）
+      ④CodeGenConcurrentWorkflow.executeWorkflow(context, stepCallback)：
+        image_plan → 4 并发搜集 → aggregator → prompt_enhancer → router
+        （生成期应用跳过 AI 路由直接用锁定类型；null/BASE 兜底 HTML；结果只写
+        context 不碰 DB）→ rag（占位）→ code_generator（appId 取 context、
+        thinkContext 拼增强提示词、流聚合进 genReply——VUE 经
+        collectHistoryText 复用直连落库规则）→ 质检条件边（fail 回
+        code_generator 带修复提示词 / VUE 走 build / 其他 skip）→ project_builder
+      ⑤全图成功后统一落库：codeGenType = generationType（单向锁定）+
+        genReply 全文落 AI 消息（决策记录第 21 条；失败不落库、留构思期可重试）
+      finally unlock（解锁失败由看门狗约 30s 自动过期兜底）
+  → SSE 事件：progress（节点完成即推 + 10s 心跳含 step/elapsedMs，兼保活 Nginx）
+    → done（路由结果/产物目录/质检结论/耗时摘要）或 business-error
+    （{error,code,message}）→ complete；断线后 send 异常吞掉（生成在锁内跑完
+    照常落库）；超时 10min 定时守门 cancel(true) 中断（决策记录第 27 条）
+  → 前端（待接线）：EventSource 消费，收终态 es.close()；断线对账重查 app
+    详情（codeGenType 已变=成功刷新预览，未变=可重试）
+配套端点：GET /app/think/exists?appId=（构思文档存在性预检：无 think 文件时
+前端弹窗二次确认，决策记录第 23 条）
+```
+
 ======================================================================
 # 三、【目标】流程详述
 ======================================================================
@@ -194,17 +229,18 @@ Executor 骨架 / 节点编写模式。
   → 走现有 chatToGenCode 生成分支（rag/think 工具仍可被 AI 调用）
 ```
 
-## 3.4 点击"生成代码" · 工作流通道
+## 3.4 点击"生成代码" · 工作流通道【后端已实现 2026-09-19（B7），实录见 2.7；
+    前端接线与联调验收待做】
 
 ```
-前端按钮 → 生成触发接口 → 生成图（虚拟线程执行，同步阻塞返回）：
-    START → RouterNode（AI 路由选型，结果落库 update codeGenType）
-      → rag 节点 → 读 think 节点
-      → image_plan → 并行搜集×4 → aggregator（可选，沿用并发图）
+前端按钮 → 生成触发接口（GET /app/gen/workflow，SSE 进度推送）→ 生成图：
+    START → image_plan → 并行搜集×4 → aggregator → prompt_enhancer
+      → RouterNode（AI 路由选型，只写 context；成功后由服务层落库）
+      → rag 节点（占位）→ 读 think（服务层已入 context.thinkContext）
       → code_generator → code_quality_check
             ├─ fail → code_generator（带修复提示词重试）
-            └─ pass → project_builder → END
-  → 返回最终 WorkflowContext（生成目录、质检结果等）
+            └─ pass → project_builder（VUE）/ END（其他）
+  → RLock 防重 + 虚拟线程执行 + 全图成功后统一落库（实录见 2.7）
 ```
 
 ## 3.5 rag / think 双形态（底层共享）
@@ -247,7 +283,7 @@ think 页（md 渲染视图）──用户点选──> getElementInfo 采集
 |---|---|---|
 | codeGenType 语义 | 阶段+策略已落地：BASE=构思期、成功后落库锁定（B5） | —（已实现） |
 | BASE 分支 | 直连通道已闭环（B4/B5 验收通过）；工作流通道已编码（B6，待联调） | B6 联调验收 |
-| 工作流 | 演示链路（appId=0、无记忆）+ B6 构思图已建（rag 占位→think，同步阻塞执行器就绪） | 生成图转正（appId/记忆打通、路由落库，B7） |
+| 工作流 | 演示链路（appId=0、无记忆）+ B6 构思图已建 + B7 生成图已接业务（appId/记忆/think 打通、路由兜底、RLock 防重、SSE 进度） | B6/B7 联调验收；前端接线（F4） |
 | 流式输出 | 直连通道全部承接（B4） | —（已实现） |
 | RAG | 两张图均预留占位插槽（RagNode，2026-09-19） | B1/B2 恢复后补检索（搁置中，决策记录第 9 条） |
 | think 文件 | 双形态已实现：WriteThinkTool/ReadThinkTool（B3/B4）+ ThinkNode（B6，不经工具类） | —（已实现） |

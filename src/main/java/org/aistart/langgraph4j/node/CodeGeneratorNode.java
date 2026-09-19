@@ -1,8 +1,10 @@
 package org.aistart.langgraph4j.node;
 
+import cn.hutool.core.util.StrUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.aistart.constant.AppConstant;
 import org.aistart.core.AIfacade.AiCodeGeneratorFacade;
+import org.aistart.core.handler.JsonMessageStreamHandler;
 import org.aistart.langgraph4j.model.QualityResult;
 import org.aistart.langgraph4j.state.WorkflowContext;
 import org.aistart.model.enums.CodeGenTypeEnum;
@@ -12,6 +14,8 @@ import org.bsc.langgraph4j.prebuilt.MessagesState;
 import reactor.core.publisher.Flux;
 
 import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.bsc.langgraph4j.action.AsyncNodeAction.node_async;
 
@@ -23,19 +27,25 @@ public class CodeGeneratorNode {
             WorkflowContext context = WorkflowContext.getContext(state);
             log.info("执行节点: 代码生成");
 
-            // 构造用户消息（包含原始提示词和可能的错误修复信息）
+            CodeGenTypeEnum generationType = context.getGenerationType();
+            // 应用 id：工作流通道的业务入参，同时作为对话记忆 id
+            Long appId = context.getAppId();
+            // 构造用户消息（包含原始提示词、构思文档与可能的错误修复信息）
             String userMessage = buildUserMessage(context);
 
-            CodeGenTypeEnum generationType = context.getGenerationType();
             // 获取 AI 代码生成外观服务
             AiCodeGeneratorFacade codeGeneratorFacade = SpringContextUtil.getBean(AiCodeGeneratorFacade.class);
             log.info("开始生成代码，类型: {} ({})", generationType.getValue(), generationType.getText());
-            // 先使用固定的 appId (后续再整合到业务中)
-            Long appId = 0L;
-            // 调用流式代码生成
+            // 调用流式代码生成（appId 打通后工厂按应用维度创建带对话记忆的 AiService）
             Flux<String> codeStream = codeGeneratorFacade.generateAndSaveCodeStream(userMessage, generationType, appId);
-            // 同步等待流式输出完成
-            codeStream.blockLast(Duration.ofMinutes(10)); // 最多等待 10 分钟
+            // 聚合本轮流内容为落库文本（全图成功后由服务层统一落库，决策记录第 21 条）
+            StringBuilder genReplyBuilder = new StringBuilder();
+            Set<String> seenToolIds = new HashSet<>();
+            JsonMessageStreamHandler jsonMessageStreamHandler = SpringContextUtil.getBean(JsonMessageStreamHandler.class);
+            codeStream.doOnNext(chunk -> genReplyBuilder.append(
+                            toHistoryText(chunk, generationType, jsonMessageStreamHandler, seenToolIds)))
+                    // 同步等待流式输出完成，最多等待 10 分钟
+                    .blockLast(Duration.ofMinutes(10));
             // 根据类型设置生成目录
             String generatedCodeDir = String.format("%s/%s_%s", AppConstant.CODE_OUTPUT_ROOT_DIR, generationType.getValue(), appId);
             log.info("AI 代码生成完成，生成目录: {}", generatedCodeDir);
@@ -43,19 +53,40 @@ public class CodeGeneratorNode {
             // 更新状态
             context.setCurrentStep("代码生成");
             context.setGeneratedCodeDir(generatedCodeDir);
+            context.setGenReply(genReplyBuilder.toString());
             return WorkflowContext.saveContext(context);
         });
     }
+
+    /**
+     * 将流中的单个块转换为落库文本
+     * VUE_PROJECT 的流是 JSON 消息块（ai_response / tool_request / tool_executed），
+     * 复用直连通道的解析规则转文本；HTML / MULTI_FILE 本身就是 AI 纯文本，直接透传
+     * （两条通道的落库内容因此保持一致）
+     */
+    private static String toHistoryText(String chunk, CodeGenTypeEnum generationType,
+                                        JsonMessageStreamHandler jsonMessageStreamHandler, Set<String> seenToolIds) {
+        if (generationType == CodeGenTypeEnum.VUE_PROJECT) {
+            return jsonMessageStreamHandler.collectHistoryText(chunk, seenToolIds);
+        }
+        return chunk;
+    }
+
     /**
      * 构造用户消息，如果存在质检失败结果则添加错误修复信息
      */
     private static String buildUserMessage(WorkflowContext context) {
-        String userMessage = context.getEnhancedPrompt();
         // 检查是否存在质检失败结果
         QualityResult qualityResult = context.getQualityResult();
         if (isQualityCheckFailed(qualityResult)) {
-            // 直接将错误修复信息作为新的提示词（起到了修改的作用）
-            userMessage = buildErrorFixPrompt(qualityResult);
+            // 质检失败重试：直接将错误修复信息作为新的提示词（起到了修改的作用）
+            return buildErrorFixPrompt(qualityResult);
+        }
+        String userMessage = context.getEnhancedPrompt();
+        // 注入构思文档全文（独立拼接、不回写 enhancedPrompt；think 文件不存在时为空不拼）
+        String thinkContext = context.getThinkContext();
+        if (StrUtil.isNotBlank(thinkContext)) {
+            userMessage = userMessage + "\n\n以下是当前的应用构思文档：\n" + thinkContext;
         }
         return userMessage;
     }

@@ -8,6 +8,7 @@ import com.mybatisflex.core.query.QueryWrapper;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.aistart.ai.AiCodeGenTypeRoutingService;
 import org.aistart.annotation.AuthCheck;
 import org.aistart.common.BaseResponse;
@@ -18,6 +19,8 @@ import org.aistart.constant.UserConstant;
 import org.aistart.exception.BusinessException;
 import org.aistart.exception.ErrorCode;
 import org.aistart.exception.ThrowUtils;
+import org.aistart.langgraph4j.model.QualityResult;
+import org.aistart.langgraph4j.state.WorkflowContext;
 import org.aistart.model.dto.app.*;
 import org.aistart.model.entity.User;
 import org.aistart.model.enums.CodeGenTypeEnum;
@@ -26,10 +29,12 @@ import org.aistart.ratelimit.annotation.RateLimit;
 import org.aistart.ratelimit.enums.RateLimitType;
 import org.aistart.service.ProjectDownloadService;
 import org.aistart.service.UserService;
+import org.aistart.utils.ThinkFileUtils;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.aistart.model.entity.App;
 import org.aistart.service.AppService;
@@ -37,9 +42,17 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.io.File;
+import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 应用 控制层。
@@ -48,6 +61,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/app")
+@Slf4j
 public class  AppController {
 
     @Resource
@@ -58,6 +72,18 @@ public class  AppController {
 
     @Resource
     private ProjectDownloadService projectDownloadService;
+
+    /**
+     * 生成进度心跳调度器：每 10s 向客户端补推一次当前步骤与已耗时
+     * （同时保活 Nginx 反向代理连接，避免长静默被掐断）；守护线程且不主动关闭
+     */
+    private static final ScheduledExecutorService HEARTBEAT_SCHEDULER = Executors.newScheduledThreadPool(4,
+            runnable -> Thread.ofPlatform().daemon().name("gen-sse-heartbeat").unstarted(runnable));
+
+    /**
+     * 进度心跳间隔（秒）
+     */
+    private static final long HEARTBEAT_SECONDS = 10;
 
 
 
@@ -121,6 +147,132 @@ public class  AppController {
         String reply = appService.thinkWorkflow(thinkWorkflowRequest.getAppId(),
                 thinkWorkflowRequest.getMessage(), loginUser);
         return ResultUtils.success(reply);
+    }
+
+    /**
+     * 工作流通道 · 生成触发（SSE 进度推送，非 token 级流式）
+     * 事件：progress（节点完成即推，10s 心跳补推当前步骤与已耗时）
+     *      → done（生成摘要）或 business-error（失败原因）
+     * 说明：立即返回 emitter，实际生成在虚拟线程中推进（工作流通道统一同步阻塞执行）
+     *
+     * @param appId   应用 ID
+     * @param message 触发消息（按钮固定文案 / 口令 / 直创应用的初始需求）
+     * @param request 请求对象
+     */
+    @GetMapping(value = "/gen/workflow", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter genWorkflow(@RequestParam Long appId,
+                                  @RequestParam String message,
+                                  HttpServletRequest request) {
+        // 参数校验：异常由全局处理器按 SSE 请求转为 business-error 事件
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用ID无效");
+        ThrowUtils.throwIf(StrUtil.isBlank(message), ErrorCode.PARAMS_ERROR, "用户消息不能为空");
+        // 获取当前登录用户
+        User loginUser = userService.getLoginUser(request);
+        // 不设异步超时（0L 表示不过期）：生成时长由后端执行器控制，连接由心跳保活
+        SseEmitter emitter = new SseEmitter(0L);
+        long startTime = System.currentTimeMillis();
+        // 当前步骤由节点回调更新，心跳定时读取后推送
+        AtomicReference<String> currentStep = new AtomicReference<>("初始化");
+        ScheduledFuture<?> heartbeat = HEARTBEAT_SCHEDULER.scheduleAtFixedRate(
+                () -> sendProgress(emitter, currentStep.get(), startTime),
+                HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+        // 客户端断开或 emitter 结束时停掉心跳
+        emitter.onError(e -> heartbeat.cancel(false));
+        emitter.onCompletion(() -> heartbeat.cancel(false));
+        CompletableFuture<WorkflowContext> future;
+        try {
+            // 提交生成：节点完成回调即推一次进度（同步校验/鉴权失败会在此抛出）
+            future = appService.genWorkflow(appId, message, loginUser, context -> {
+                currentStep.set(context.getCurrentStep());
+                sendProgress(emitter, currentStep.get(), startTime);
+            });
+        } catch (RuntimeException e) {
+            // 同步失败：撤掉心跳，异常交由全局处理器写入 business-error 事件
+            heartbeat.cancel(false);
+            throw e;
+        }
+        // 终态收尾：成功推 done 摘要，失败推 business-error，随后关闭 emitter
+        future.whenComplete((context, throwable) -> {
+            heartbeat.cancel(false);
+            if (throwable == null) {
+                sendEvent(emitter, "done", buildDoneSummary(context, startTime));
+            } else {
+                log.error("工作流通道生成失败，appId: {}", appId, throwable);
+                sendEvent(emitter, "business-error", buildBusinessError(throwable));
+            }
+            emitter.complete();
+        });
+        return emitter;
+    }
+
+    /**
+     * 构思文档存在性预检（生成触发前使用：无构思文档时前端弹窗二次确认）
+     *
+     * @param appId   应用 ID
+     * @param request 请求对象
+     * @return 构思文档是否存在
+     */
+    @GetMapping("/think/exists")
+    public BaseResponse<Boolean> existsThink(@RequestParam Long appId, HttpServletRequest request) {
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用ID无效");
+        // 获取当前登录用户并校验应用归属，仅创建者可访问
+        User loginUser = userService.getLoginUser(request);
+        App app = appService.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR, "应用不存在");
+        if (!app.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限访问该应用");
+        }
+        return ResultUtils.success(ThinkFileUtils.existsThink(appId));
+    }
+
+    /**
+     * 推送进度事件（节点完成即推；10s 心跳走同一入口）
+     */
+    private void sendProgress(SseEmitter emitter, String step, long startTime) {
+        Map<String, Object> data = Map.of(
+                "step", StrUtil.blankToDefault(step, "生成中"),
+                "elapsedMs", System.currentTimeMillis() - startTime);
+        sendEvent(emitter, "progress", JSONUtil.toJsonStr(data));
+    }
+
+    /**
+     * 构建生成摘要：路由结果 / 产物目录 / 质检结论 / 耗时
+     */
+    private String buildDoneSummary(WorkflowContext context, long startTime) {
+        Map<String, Object> summary = new LinkedHashMap<>();
+        CodeGenTypeEnum generationType = context.getGenerationType();
+        summary.put("generationType", generationType == null ? null : generationType.getValue());
+        summary.put("generatedCodeDir", context.getGeneratedCodeDir());
+        summary.put("buildResultDir", context.getBuildResultDir());
+        QualityResult qualityResult = context.getQualityResult();
+        summary.put("qualityValid", qualityResult == null ? null : qualityResult.getIsValid());
+        summary.put("qualityErrors", qualityResult == null ? null : qualityResult.getErrors());
+        summary.put("elapsedMs", System.currentTimeMillis() - startTime);
+        return JSONUtil.toJsonStr(summary);
+    }
+
+    /**
+     * 构建业务错误数据（与全局处理器的 SSE 错误格式一致）
+     */
+    private String buildBusinessError(Throwable throwable) {
+        Throwable cause = throwable.getCause() == null ? throwable : throwable.getCause();
+        int code = cause instanceof BusinessException businessException
+                ? businessException.getCode() : ErrorCode.SYSTEM_ERROR.getCode();
+        String message = cause instanceof BusinessException && StrUtil.isNotBlank(cause.getMessage())
+                ? cause.getMessage() : "生成失败，请重试";
+        return JSONUtil.toJsonStr(Map.of("error", true, "code", code, "message", message));
+    }
+
+    /**
+     * 发送 SSE 事件
+     * 客户端断开后发送会抛 IO 异常，捕获忽略即可——生成仍在锁内跑完、正常落库，仅进度事件丢失
+     */
+    private void sendEvent(SseEmitter emitter, String eventName, String data) {
+        try {
+            emitter.send(SseEmitter.event().name(eventName).data(data));
+        } catch (IOException | IllegalStateException e) {
+            log.debug("SSE 事件发送失败（客户端可能已断开）: {}", e.getMessage());
+        }
     }
 
     /**

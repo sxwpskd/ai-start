@@ -1,9 +1,21 @@
 # 开发文档（执行+验收层 · 任务拆解 / 决策记录 / 实施顺序）
 
-更新时间：2026-09-19（第二批次）B6 编码完成（后端 + 前端最小接线），编译与
+更新时间：2026-09-19（第五批次）B7 前端接线完成（AppChatPage.vue 生成图
+EventSource 接线 + 触发分流 + think 预检 + 口令识别；HomePage.vue 移除"工作流
+未就绪"闸）；6 处历史类型错误已修（判空守卫）→ npm run build 通过；B6/B7 联调
+完成；新增决策记录第 28 条（开关定通道 / 按钮显示条件 / 二次确认保留 / 断线
+对账维持）；D4 VUE 双构建仍挂起
+（第四批次 2026-09-19：B7 后端编码完成（9 文件改动/新增，mvnw compile
+通过），任务条目按实际实现逐条标注；新增决策记录第 26/27 条（genReply 落库文本
+复用直连规则 / SSE 端点线程模型与异常路径）；前端接线（F4）与联调验收待做；
+D4 VUE 双构建挂起（候选方案已记，联调前定））
+（第三批次 2026-09-19：B7 设计定稿（尚未编码）：落库时序 / 触发交互 /
+进度推送 / 防重四项拍板 + 路由两点细化，新增决策记录第 21~25 条；B7 任务条目
+按定稿重写；第二节"延后决策"的生成触发交互项随之了结，F4 与接口映射同步修订）
+（第二批次 2026-09-19：B6 编码完成（后端 + 前端最小接线），编译与
 type-check 通过、联调验收待做；B6 任务条目按实际实现标注；新增决策记录第
 18/19/20 条（双图定稿与 rag 插槽 / 工作流 AI 服务与记忆方案 / 端点与落库）；
-B7 预埋 rag 插槽并预记"生成图读 think"设计
+B7 预埋 rag 插槽并预记"生成图读 think"设计）
 （第一批次 2026-09-19：B4/B5 手动联调验收通过，BASE 直连通道闭环；决策记录
 第 17 条首页创建时显式选型直接落库；记录前端 AppChatPage.vue 既有类型错误
 致 npm run build 必失败，拍板延后处理）
@@ -180,27 +192,78 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
   previewKey 强制重建 iframe（构思期预览地址前后相同 base_{appId}/，Vue 不重载
   相同 src）——F4 全套仍留 B7 后统一打磨
 - 依赖 B3；验收：开关=开时构思请求跑工作流，同步返回 + 预览刷新
-- 状态：编码完成；联调验收未做（需后端启动 + DB 应用为 base + Redis 就绪）
+- 状态：编码完成；联调完成（2026-09-19）
 
-### B7：生成图转正（工作流通道 · 生成）
+### B7：生成图转正（工作流通道 · 生成）（2026-09-19 编码完成——后端 + 前端，
+    编译与 build 均通过，联调完成；设计定稿见决策记录第 21~25 条，编码期细化
+    决策见第 26/27 条，前端细化见第 28 条；D4 双构建挂起中，见条目末尾）
 -【改动 · 已完成 2026-09-19（B6 期间预埋）】CodeGenConcurrentWorkflow：router 后
   插入 rag 占位节点（router → rag → code_generator，与流程.txt 3.4 蓝图一致）；
   该类现仅测试引用、零业务风险；B1/B2 恢复后 rag 节点须自行把检索结果并入
   enhancedPrompt（prompt_enhancer 在 router 之前已执行完，不能指望它再合并）
--【改动】CodeGenConcurrentWorkflow（并发版转正）：入口接业务侧，appId/记忆打通
--【改动】CodeGeneratorNode：appId 改从 context 读取（去掉硬编码 0L；blockLast 保留，
-  与同步阻塞模式一致）
--【改动】RouterNode：AI 路由选型结果落库（update codeGenType）
--【新增】GenWorkflowExecutor：同步阻塞执行 + 超时控制
-  （超时方案已定，见第四节决策记录第 8 条：Nginx 600s + 前端 10min + 生成中防重）
--【改动】AppController：工作流通道的生成触发端点
--【设计预记 2026-09-19（用户拍板归 B7）】生成图开始时读 think 文件入 context：
-  用独立字段（如 thinkContext），不得并入 originalPrompt——RouterNode 拿
-  originalPrompt 做 AI 路由，拼入约 800 字构思会污染路由提示词；think 文件不存在
-  时置空不拼（决策记录第 17 条的直创生成期应用无构思文档，"尚未创建"提示文本
-  只适用于构思图场景）；前置条件 = appId 打通（CodeGeneratorNode 现硬编码 0L）
-- 依赖 B6（WorkflowContext 字段）；验收：开关=开 + 点生成：全图跑完一次性返回，
-  质检 fail 可重试，产物正确落盘
+-【改动 · 已完成 2026-09-19】WorkflowContext：新增 thinkContext（构思文档全文，
+  独立字段、不得并入 originalPrompt——RouterNode 拿它做 AI 路由，拼入会污染
+  路由提示词；think 文件不存在时为空）+ genReply（生成回复全文，成功后落库
+  依据）两字段
+-【改动 · 已完成 2026-09-19】ThinkFileUtils：新增 existsThink(appId)（仅判存在
+  性——readThink 缺失时返回"尚未创建"提示文本、不能当存在性判据，故另建；
+  供预检端点与 genWorkflow 读取前判断共用）
+-【改动 · 已完成 2026-09-19】RouterNode：抽出 resolveGenerationType——①应用已
+  处生成期（codeGenType 非空且非 BASE）直接用锁定类型、跳过 AI 路由（决策记录
+  第 25 条）；②路由结果为 null 或 BASE 兜底 HTML（原实现只兜异常，BASE 会漏进
+  Facade 构思分支）；③路由依据沿用 context.originalPrompt（服务层填
+  App.initPrompt）；仍只写 context、不碰 DB（决策记录第 21 条）
+-【改动 · 已完成 2026-09-19】CodeGeneratorNode：appId 改从 context 读取（去掉
+  硬编码 0L）；首轮 userMessage = enhancedPrompt + thinkContext（拼接格式与 B5
+  直连逐字一致，独立拼接、不回写 enhancedPrompt）；质检重试轮沿用修复提示词
+  整段替换、不重拼 thinkContext（AI 从记忆仍可见首轮上下文）；流内容按块聚合
+  进 context.genReply——VUE 走 collectHistoryText 复用直连落库规则、HTML/
+  MULTI_FILE 直接透传原文（决策记录第 26 条）；blockLast(10min) 保留
+-【改动 · 已完成 2026-09-19，编码期新增（原任务条目未列）】JsonMessageStream
+  Handler：纯新增 collectHistoryText(chunk, seenToolIds)——只收集历史文本不落库
+  （AI 原文 / 工具执行结果格式化 / tool_request 仅 toolId 去重记账），规则与
+  handleJsonMessageChunk 的历史收集部分一致；现有 handle 路径零改动（详见决策
+  记录第 26 条）
+-【改动 · 已完成 2026-09-19】CodeGenConcurrentWorkflow：新增业务入口
+  executeWorkflow(WorkflowContext, Consumer<WorkflowContext>)——步骤回调供
+  SSE 进度推送，回调异常只记日志、不影响图执行；旧 executeWorkflow(String)
+  保留签名、改为构造仅含 originalPrompt 的上下文后委托新方法（零删除）；图
+  结构与并发线程池（Parallel-Image-Collect）未动；已知副作用：演示测试
+  （仅测试引用）产物目录由 *_0 变 *_null，接受
+-【新增 · 已完成 2026-09-19】GenWorkflowExecutor（workflow 子包，与
+  BaseWorkflowExecutor 同包）：@Component + 静态虚拟线程池 + submit(Supplier) →
+  CompletableFuture；超时改定时守门 cancel(true)（10min；D3 拍板：本项目非
+  专业代码生成场景，10min 足够）——SSE 形态下请求线程已返回、无人等
+  Future.get，守门与任务完成互斥、终态唯一；虚拟线程不池化（一任务一线程，
+  JDK21 正式特性，钉住风险仅在 synchronized 块、链路上无）
+-【改动 · 已完成 2026-09-19】AppService/AppServiceImpl：genWorkflow——同步段
+  （请求线程）：参数校验 → 查应用 → 仅创建者鉴权 → resolveCodeGenType（空值
+  兜底 BASE、非法值抛错，抽出私有方法）；异步段（GenWorkflowExecutor 虚拟线程
+  内，加锁与解锁必须同线程，决策记录第 27 条）：tryLock(gen_workflow:lock:
+  {appId}) 不等待、失败抛"应用正在生成中"→ 先落用户消息 → existsThink 为真则
+  readThink 入 thinkContext（不存在置空不拼）→ 初始上下文（originalPrompt =
+  App.initPrompt）→ 跑生成图 → 成功后 lockGenerationType（codeGenType 单向
+  锁定）+ saveGenReply（genReply 全文落 AI 消息）→ finally 解锁（异常只记
+  日志，看门狗约 30s 自动过期兜底）；落库失败仅记日志（沿用 B5 先例）
+-【改动 · 已完成 2026-09-19】AppController：①GET /app/gen/workflow（SSE，
+  SseEmitter(0L) 立即返回）：progress（节点完成即推 + 10s 心跳含 elapsedMs，
+  心跳四路撤销无泄漏）→ done（路由结果/产物目录/质检结论/耗时摘要）或
+  business-error（{error,code,message}，与全局处理器格式一致）→ complete；
+  断线后 send 异常捕获吞掉（生成在锁内跑完照常落库，仅进度丢失）；同步段异常
+  走全局处理器 SSE 分支（按 Accept 头识别——该机制原服务 Flux 端点，SseEmitter
+  端点首次使用，联调验证点）；②GET /app/think/exists?appId=：归属校验后返回
+  存在性布尔
+- 依赖 B6（WorkflowContext 字段）；验收：开关=开 + 点生成：progress 事件逐
+  节点推送、done 事件返回摘要，质检 fail 可重试（修复提示词回
+  code_generator），产物正确落盘；生成中重复触发被 RLock 拒绝；失败后应用
+  留构思期可重试
+- 状态：编码完成——后端 9 文件（mvnw compile 通过）+ 前端 2 文件
+  （AppChatPage.vue 生成图接线/F4 全套 + 6 处历史类型错误修复；
+  HomePage.vue 移除"工作流未就绪"闸），npm run build 通过；联调完成（2026-09-19）
+-【挂起】D4 VUE 双构建：Facade.processTokenStream 的 onCompleteResponse 内嵌
+  构建一次 vue_project_{appId}，ProjectBuilderNode 随后再构建同一目录——npm
+  install/build 跑两遍，叠加 10min 超时后 VUE 路径偏紧；候选方案 A：Project
+  BuilderNode 检测 dist 已存在则跳过（最小改动）；方案 B：保留现状；联调前定
 
 ======================================================================
 ## 二、前端（独立仓库 · 详细规格 v3，2026-09-17）
@@ -209,7 +272,8 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
 ### 总规则（已确认）
 - 工作流开关默认【关闭】；全局用户级，localStorage 持久化；切换不清空会话
 - 接口分流：开关=关 → 全部走现有接口（现有代码零改动）；
-  开关=开 → 新接口（现在 toast「工作流待转正」占位，B6/B7 后接入）
+  开关=开 → 构思期：构思图（普通消息）/ 生成图（生成代码按钮、触发口令、
+  生成期直创应用的首条 initPrompt）；已生成后的改码对话恒走直连（流程.txt 1.2）
 - 模式单向锁定：生成【成功】后 codeGenType 落库并锁定，不支持回退构思期、
   不支持更换 CodeType（重新构思=新建应用）；
   生成失败仍处构思期，可改选重试（构思不丢）
@@ -220,21 +284,25 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
 - appMode：由 App.codeGenType 派生——BASE=构思中；HTML/MULTI_FILE/VUE_PROJECT=生成模式
 - generating: boolean——请求进行中，期间禁用开关与按钮
 
-### F1 工作流开关【已实现（2026-09-18 前端核实：AppChatPage.vue workflowStore 分流 + toast 占位）】
+### F1 工作流开关【已实现（B7 完成接线：构思期双入口 + 生成期直创首条消息）】
 - 聊天页常显；位置：输入框操作区、发送按钮左侧
   （与 F2 按钮同行排列：[生成代码][工作流开关][发送]；
    textarea 的 padding-right 需加大，避免输入文字被按钮遮挡）
-- 开：发送 → toast「工作流待转正」占位（B6/B7 后走新接口）
+- 开：构思期发送 → 构思图（POST /app/chat/think/workflow，B6）；
+  生成期（首页直创应用）首条 initPrompt → 生成图（决策记录第 28 条）
 - 关：发送 → 现有 /app/chat/gen/code（SSE 零改动）
+- 首页同名开关的"工作流未就绪"闸已移除（B6/B7 就绪，闸的前提消失）
 
-### F2 生成代码按钮
+### F2 生成代码按钮【B7 更新：开关=开时同显，两条通道行为分叉】
 - 位置：输入框操作区、发送按钮左侧（与 F1 同行）
-- 显示条件：workflowEnabled=false && appMode=BASE
-- 点击 → CodeType 三选一弹窗（必选；取消=留构思期）；
+- 显示条件：appMode=BASE（B7 修订，原为 workflowEnabled=false && appMode=BASE）
+- 点击（开关=关）→ CodeType 三选一弹窗（必选；取消=留构思期）；
   弹窗标题「选择代码生成类型」，确认按钮「开始生成」
 - 确认 → 复用现有请求函数（EventSource 零新增）：
   GET /app/chat/gen/code?appId=&message=请根据以上构思，生成代码&codeGenType=<选中值>；
   SSE 事件处理（内容拼接 / done / business-error）全复用现有 handler
+- 点击（开关=开）→ 不弹类型框（类型由 RouterNode 决定）→ think 预检 →
+  GET /app/gen/workflow（决策记录第 28 条）
 - 成功 → appMode 更新，按钮永久隐藏；失败 → 按钮保留可重试
 
 ### F3 构思界面（直连 · 默认态）
@@ -244,11 +312,21 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
   将来在 SSE 处理中加 previewKey++ 即可】
 - 顶部「构思中」徽章
 
-### F4 工作流等待交互（B6/B7 后）
-- 同步阻塞请求：全屏 loading + 阶段文案 + 10min 超时 + 失败重试
-- 状态：BASE 期最小接线已实现（2026-09-19：sendMessageByWorkflow 同步调用 +
-  generating 状态 + previewKey 刷新；请求超时暂依赖 axios 默认，未单独配 10min）；
-  生成期仍 toast 占位（B7 接管）；F4 全套留 B7 后统一打磨
+### F4 工作流等待交互【已实现 2026-09-19（B7 前端接线）】
+-【B7 定稿 2026-09-19，修订原"同步阻塞 + 10min 超时"方案】生成期走 SSE
+  （决策记录第 22 条）：EventSource 消费 GET /app/gen/workflow——progress
+  事件更新阶段文案（节点完成即推 + 10s 心跳含已耗时），done / business-error
+  后 es.close()；断线对账：重查 app 详情，codeGenType 已变 = 实际成功 →
+  刷新预览，未变 = 可重试；think 预检（无 think 文件弹窗确认）+ 口令前端识别
+  改调生成端点（第 23 条）；生成中 generating 禁发（沿用 B6 状态）
+- 实现落点（2026-09-19，AppChatPage.vue）：genProgressText + WORKFLOW_STEP_TEXT_MAP
+  （13 个节点名 → 友好文案，以后端 setCurrentStep 为准）、isWorkflowTriggerCommand
+  （口令常量比对）、triggerWorkflowGenerate（预检 → 二次确认 → 触发）、
+  isThinkMissing（GET /app/think/exists，异常按"存在"处理不阻断）、
+  startWorkflowGenerate + generateByWorkflow（EventSource 三事件 + 断线对账）；
+  预览区 loading 文案接入 genProgressText
+- 状态：构思期（B6 sendMessageByWorkflow）与生成期（B7 generateByWorkflow）接线
+  均已完成；npm run build（含 vue-tsc）通过
 
 ### F5 预览切换（2026-09-18 规格翻转：think 页由只读 → 可点选）
 - iframe src 由 appMode 驱动：BASE → think 渲染页静态地址；生成模式 → 现有预览
@@ -263,25 +341,21 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
 | 构思对话（直连） | 现有 /app/chat/gen/code | 零 |
 | 生成触发（直连） | 现有 /app/chat/gen/code + codeGenType 参数 | 零新增请求（多拼一个参数） |
 | 生成后改码（直连） | 现有接口 | 零 |
-| 工作流全部 | 新接口（待定） | toast 占位 → B6/B7 接入 |
+| 工作流构思对话 | POST /app/chat/think/workflow（B6 已建） | 已接入（B6 最小接线） |
+| 工作流生成触发 | GET /app/gen/workflow（SSE）+ GET /app/think/exists 预检（B7） | 已接入（B7 前端接线） |
 
 ### 延后决策
-- 工作流模式的生成触发交互（B7 时定：大概率按钮+确认，无 CodeType 选择，
-  RouterNode 自动路由）。用户提议口令式判据（消息含"我已明确我的需求，现在
-  生成代码"才进生成图）——方向可行（与直连 F2 固定文案同风格），但建议
-  端点/意图参数为主、文案为辅（纯文案判据易被误触发，且生成图是数分钟级
-  含 npm 构建的昂贵操作；另需与直连文案「请根据以上构思，生成代码」统一或
-  明确区分）；随 B7 交互定稿
+-【已定稿 2026-09-19，归决策记录第 23 条】工作流模式的生成触发交互：端点
+  为主 + 口令前端识别 + think 存在性预检弹窗；无 CodeType 选择、RouterNode
+  自动路由的原方向不变
 
-### 已知问题（2026-09-19 记录，拍板延后处理）
-- AppChatPage.vue 6 处既有类型错误（TS2532：messages.value[aiMessageIndex]
-  下标访问未判空；B6 前端改动后行号移至 615/616/650/651/746/747，数量与成因
-  不变，B6 新增代码已用判空守卫、零新增错误）：npm run build 的 type-check
-  （vue-tsc --build）必失败——build = run-p type-check + build-only，任一
-  子进程退出码非 0 整体失败（已实测退出码 2）；dev 模式 Vite/esbuild 只剥
-  类型不检查，故日常开发不可见。git diff 核实为历史遗留，与 BASE 改造无关。
-  修法已备（判空守卫或封装 updateMessage 函数，不改运行时行为）——
-  部署上线前必须先修，日常暂延后
+### 已知问题（2026-09-19）
+-【2026-09-19 已修复】AppChatPage.vue 6 处既有类型错误（TS2532：
+  messages.value[aiMessageIndex] 下标访问未判空；根因 = tsconfig 继承
+  @vue/tsconfig 的 noUncheckedIndexedAccess，下标访问类型为 `Message | undefined`）
+  ——原拍板延后处理，B7 前端接线时一并修复（3 处加判空守卫，不改运行时行为）；
+  npm run build（run-p 同时跑 vue-tsc --build 与 vite build）已通过、退出码 0。
+  此前的记录：build 必失败（退出码 2），dev 模式 esbuild 只剥类型不检查故不可见
 
 ======================================================================
 ## 三、依赖与实施顺序（2026-09-17 定序：前端先行 → 直连 → 工作流）
@@ -297,9 +371,12 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
   【进度 2026-09-19】B3 / B4 / B5 编码、编译及手动联调验收全部通过
    （用户确认 BASE 直连通道闭环）；阶段二完成
 阶段三 · 工作流：B6 → B7 → F4/F5 收尾
-  【进度 2026-09-19】B6 编码完成（后端 9 文件 + 前端 1 文件），编译/type-check
-   通过；联调验收待做。B7 预埋：生成图 rag 插槽已插入（router 后）
-【搁置恢复后】B1 → B2 → RagNode 补挂（B4 工具列表 / B6 图插槽）
+  【进度 2026-09-19】B6 编码完成（后端 9 文件 + 前端 1 文件）；B7 编码完成
+   （后端 9 文件，含编码期新增的 collectHistoryText；前端 2 文件，含 F4 全套接线
+   与 6 处历史类型错误修复）；后端 mvnw compile、前端 npm run build 均通过；
+   决策记录第 21~28 条齐备；B6/B7 联调完成；F5（BASE 期可视化编辑入口放开）待做；
+   D4 VUE 双构建仍挂起（联调前定，见 B7 条目末尾）
+【搁置恢复后】B1 → B2 → RagNode 补挂（B4 工具列表 / B6/B7 图插槽）
 
 ======================================================================
 ## 四、决策记录（唯一归属 · 按拍板顺序；无待确认挂起项）
@@ -496,7 +573,7 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
      ——「先构思，再生成」（默认，=base）/原生 HTML/原生多文件/Vue 项目；
      同区新增 F1 工作流开关（全局持久化；B6/B7 未就绪期间开启则禁用创建
      按钮 + tooltip「工作流未就绪」，防 initPrompt 被占位逻辑拦截产出
-     空白应用）
+     空白应用）【该闸已由第 28 条解除——B6/B7 就绪后前提消失】
    - 与第 16 条的边界（不推翻第 16 条）：第 16 条禁止的是生成触发时
      「参数到达即落库」——那是阶段跃迁锚点，必须 AI 流成功后才落库；
      本条允许的是创建时用户显式选型直接落库——这是 codeGenType 的初始值
@@ -567,3 +644,184 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
    - 前端刷新补丁：iframe 加 :key="previewKey"——构思期预览地址前后相同
      （base_{appId}/），Vue 不重载相同 src，靠改 key 强制重建；该 key 亦为
      F3（直连工具事件驱动刷新）预留
+
+21.【B7 落库时序：初始消息先落 + 全图成功后统一落库】（2026-09-19 确认；B7 原
+    任务条目"RouterNode：AI 路由选型结果落库"按本条重新解读为"服务层成功后
+    落库"）
+   - 三段式时序：①触发时先落用户消息（对齐第 20 条时序硬约束：记忆回灌靠
+     "跳过最新一条"排除本轮消息，顺序反了会误吞历史）→ ②全图执行期间一切
+     产物只写 WorkflowContext（路由结果/生成回复/质检结论），不碰 DB →
+     ③全图成功后服务层统一落库 codeGenType + AI 生成回复；失败不落库、应用
+     留构思期可重试
+   - 与第 16 条锚点一致：若按原条目字面在 RouterNode（图中段）就 update
+     codeGenType，图后续失败会把应用卡在生成期且无产物，违反"生成失败仍处
+     构思期"总规则——RouterNode 只写 context.generationType，落库归服务层
+   - 代码事实依据：AiCodeGeneratorFacade.generateAndSaveCodeStream 只做生成 +
+     解析 + 保存文件，AI 回复落库由 service 层 streamHandlerExecutor 完成——
+     图内调 Facade 不碰 chat_history，"内容先进 context"无需绕开任何既有落库
+   - 连带改动：CodeGeneratorNode 现为 blockLast 丢弃流内容，需聚合进 context
+     新字段 genReply，否则成功后无内容可落库；且直连通道落库的生成回复是
+     后续改码对话的记忆来源，工作流通道缺了它改码会失忆
+   - 直创生成期应用（第 17 条）同理：触发时先落初始对话，失败可重试、会话
+     历史不丢（用户原话场景："使得用户可以再次重复发送请求来生成"）
+
+22.【B7 端点契约修订：SSE 进度推送】（2026-09-19 确认；修订第 7 条工作流通道
+    契约"POST /app/gen/workflow {appId} → 同步阻塞 → 返回 JSON 摘要"。动因：
+    要 10s 级节点进度推送体感，而单次同步响应期间无法向客户端推送中间信息）
+   - 端点：GET /app/gen/workflow，produces = text/event-stream（EventSource 仅
+     支持 GET，照 /app/chat/gen/code 的 GET + query 参数模式）
+   - 事件设计：progress（节点完成即推当前步骤；每 10s 心跳补推"当前步骤 +
+     已耗时"）→ 终态二选一：done（摘要 JSON：路由结果/产物目录/质检结论/
+     耗时；部署仍走现有 /app/deploy，不在图内）或 business-error（原因）；
+     前端收终态后 es.close()
+   - 三案取舍（同步 JSON / 轮询 / SSE）：同步 JSON 无进度体感，长静默连接依赖
+     第 8 条 Nginx 600s 静态配置、单节点超 600s 仍会被掐；轮询无长连接但要新
+     增启动/查状态/取结果三端点、体感最弱（拉模型）；SSE 是唯一能给推送体感
+     的方案（推模型），且前后端均有现成模式——聊天页 EventSource 消费 +
+     WorkflowSseController 的 SseEmitter 演示可照抄，零新依赖（"类似 MQ 的
+     推送感"用 SSE 即标准解，不引入 MQ）
+   - 与第 4 条"工作流不做流式"的澄清：不做的是 token 级 AI 内容流式；SSE 只是
+     传输载体，推的是粗粒度节点进度事件，不违背原设计初衷
+   - 心跳的额外价值：Nginx proxy_read_timeout 按"两次读之间"计时，心跳不断
+     重置计时器 → 连接永不空闲超时，比静态 600s 更稳；第 8 条 Nginx 配置保留
+     作心跳失效兜底，前端独立的 10min 请求超时不再需要（超时判定收敛到后端
+     执行器 10min → business-error 事件）
+   - 断线对账（不引入进度存储表）：前端 EventSource error 时重查 app 详情——
+     codeGenType 已变 = 后端实际已成功（锁内跑完照常落库）→ 刷新预览；未变 =
+     失败/未完成 → 可重试；EventSource 自动重连打到端点会被 RLock 拒绝并回
+     business-error"生成中"，前端据此转对账逻辑
+   - 实现注意：SseEmitter 超时显式设 0L（Spring 异步请求默认超时很短）；断线
+     后 emitter.send 抛 IO 异常需捕获吞掉——生成在锁内继续跑完、落库照常，
+     仅进度事件丢失
+
+23.【B7 生成触发交互定稿：端点为主 + 口令前端识别 + think 存在性预检】
+    （2026-09-19 确认，了结第二节"延后决策"挂起项）
+   - 端点为主：生成触发恒走 GET /app/gen/workflow（第 22 条），后端不解析
+     文案——后端若解析口令就退化成"文案为主"；口令式判据原提议的取舍结果 =
+     口令保留但降为辅助触发，识别职责放前端
+   - 口令为辅（前端识别）：前端识别到口令消息（"我已明确我的需求，现在生成
+     代码"）时改调生成端点而非聊天端点；纯文案判据易误触发的风险由"独立
+     端点 + think 预检"双层兜底
+   - think 存在性预检：新增轻量端点 GET /app/think/exists?appId=
+     （ThinkFileUtils 新增 existsThink，仅判存在不读内容）；前端分流——有
+     think 文件 = 用户已充分构思，直接生成；无 think 文件（第 17 条直创生成
+     期应用或从未产出构思文档）= 弹窗"是否确定生成"，确认后再调
+   - 文案区分（了结"与直连文案统一或明确区分"的悬置）：按钮触发沿用直连 F2
+     固定文案「请根据以上构思，生成代码」（跨通道行为一致）；口令为工作流
+     通道专属触发语，前端硬编码识别，两者明确区分
+
+24.【B7 防重定稿：Redisson RLock 单锁】（2026-09-19 确认，第 8 条"生成中防重"
+    的原语选型，四案对比后拍板）
+   - 用法：按 appId 取锁 gen_workflow:lock:{appId}，tryLock(0) 不等待、拿不到
+     立即回"应用正在生成中"（防重要的是拒绝并发而非排队）；finally unlock；
+     用默认看门狗续期——进程崩溃后续期停止、锁约 30s 自动过期（否决显式
+     leaseTime 变体：零续期流量但崩溃后锁滞留最长 leaseTime；续期流量本身
+     噪音级约 30 条/次生成，不值）
+   - 否决令牌桶（复用 @RateLimit）：限"频率"不做"互斥"——生成期间令牌若已
+     补充，双击两请求都放行；补充周期拉长到 ≥ 生成时长又会误杀失败重试，
+     且不同应用会被同一限流器误伤，语义对不上
+   - 否决 JVM 内存标记（ConcurrentHashMap 记录生成中 appId）：单机正确、多
+     实例失效——本项目 spring-session-data-redis 会话共享、不保证粘性路由，
+     同一用户双击的两个请求可能落到两个实例，本地标记对最典型的双击防重
+     提供零保护
+   - 否决"JVM 本地锁优先 + Redis 兜底"双层锁（用户提议，认真评估后否决）：
+     该模式成立需三条件——加锁频率极高/临界区极短/热点集中（典型如缓存击穿
+     per-key 锁、秒杀库存），本地层的价值是摊薄 Redis QPS；本场景全部相反
+     （人手触发、锁开销毫秒级 ÷ 临界区分钟级 ≈ 0.001%，无流量可摊薄）。更
+     本质：锁应与被保护资源同层——被保护的是生成目录文件与 DB 记录（全局
+     资源），不存在"仅本进程可见"的资源需要本地锁；且互斥锁裁判权必须在
+     共享存储（运行时无法感知其他实例是否在抢），"平时本地、需要时才问
+     Redis"的兜底语义不成立。另"单机没必要依赖 Redis"前提不成立：登录态/
+     记忆/限流/缓存全在 Redis，Redis 挂了系统早已不可用，RLock 零新增依赖面
+   - 翻案条件（留档）：将来锁粒度变细且频率变高（如按消息加锁）或出现进程
+     内共享可变状态需保护时，再引入本地层不迟
+   - 前端配套：生成中 generating 状态禁发（B6 已有该状态，沿用）
+
+25.【B7 路由细化：依据 App.initPrompt + 生成期跳过路由】（2026-09-19 确认）
+   - 路由依据：服务层把 App.initPrompt 写入 context.originalPrompt——口令/
+     固定触发文案本身无信息量，不能作路由输入；严格执行"think 不进路由提示
+     词"的既有拍板（约 800 字构思会污染路由提示词）。已知取舍并接受：构思期
+     需求演化后 initPrompt 可能过时（如博客聊成电商站）导致路由偏旧；若联调
+     发现路由质量不佳，再评估让路由器看 think 摘要（需重新拍板）
+   - 生成期跳过路由：已在生成期的应用（第 17 条直创）触发生成图时，RouterNode
+     跳过 AI 路由直接用已锁定类型——否则重新路由可能选出与锁定值不同的类型，
+     与"单向锁定、不支持换型"规则冲突；此时成功后落库为等值更新，幂等无害
+
+26.【B7 编码期决策：genReply 的落库文本复用直连规则】（2026-09-19 确认，四案
+    对比后拍板 A；问题缘起：VUE 流是 JSON 消息块，节点 blockLast 直接聚合会
+    落成 JSON 堆）
+   - 问题本质澄清（用户疑问"落库是现有流程为什么要改"）：落的"规则"确实不变，
+     变的是"流由谁消费"——直连时 JsonMessageStreamHandler 消费流并顺手产出
+     DB 文本；工作流里流被 CodeGeneratorNode 的 blockLast 消费，直连的格式化
+     逻辑不在路径上，缺的是"按规则加工"这一步（HTML/MULTI 是纯文本透传即一致，
+     仅 VUE 有此问题）
+   - 定稿（方案 A）：JsonMessageStreamHandler 纯新增 collectHistoryText(chunk,
+     seenToolIds)——只收集历史文本、不落库（AI 原文 / 工具执行结果格式化 /
+     tool_request 仅 toolId 去重记账不落库），规则与 handleJsonMessageChunk 的
+     历史收集部分一致；现有 handle 路径零改动；工作流通道 DB 内容与直连逐字
+     一致，且坚守第 21 条"全图成功后统一落库"
+   - 否决 D（图内直接调 streamHandlerExecutor 复用落库链路、零新增代码）：AI
+     回复会在图内流完成时就落库，图后续失败时 DB 已有回复（codeGenType 仍留
+     构思期），违反第 21 条；且 doExecute 需要 loginUser 而图内只有 userId
+   - 否决 B（节点只取 ai_response 文本）：与直连落库不一致，丢工具事件记录
+   - 否决 C（存 JSON 原文）：聊天记录变 JSON 堆，不可读
+   - 已知代价（接受）：collectHistoryText 与 handleJsonMessageChunk 是同一套
+     规则的两份实现（换取"不改现有路径"），将来落库规则变更须同步两处
+   - 连带定稿：质检重试轮不重拼 thinkContext（修复提示词整段替换 userMessage，
+     AI 从记忆仍可见首轮上下文），维持现状
+
+27.【B7 编码期决策：SSE 端点的线程模型与异常路径】（2026-09-19 确认，D2 细化；
+    第 22 条 SSE 拍板的必然推论，本条落实现细节；D3 超时=10min 用户拍板：
+    本项目非专业代码生成场景，10min 足够）
+   - 硬约束：Redisson RLock 按 threadId 记录持有者（可重入计数），解锁必须在
+     持锁线程——所以"加锁+落库+跑图+落库+解锁"整段作为 Supplier 提交给
+     GenWorkflowExecutor 的同一虚拟线程执行；Controller 立即返回 emitter
+   - 同步段（请求线程）只做参数校验/查应用/鉴权：异常由全局处理器按 Accept:
+     text/event-stream 识别、写 business-error 事件——该机制原服务 Flux 端点，
+     SseEmitter 端点首次使用，为联调验证点
+   - 异步段异常（锁被占、图内异常、超时）：走不到全局处理器（异步线程无请求
+     上下文，RequestContextHolder 为空），由 future.whenComplete 手动发
+     business-error 事件（格式与全局处理器一致），随后 complete()
+   - 超时实现：请求线程已返回、无人等 Future.get → 改定时守门 cancel(true)
+     中断执行线程，中断从 blockLast 抛出、finally 解锁；守门与任务完成互斥
+     （CompletableFuture 只认第一次终态），无竞态
+   - 心跳与保活：SseEmitter(0L) 不过期 + 10s 心跳（体感 + 保活 Nginx 双重
+     作用）；心跳四路撤销（onError/onCompletion/终态回调/同步失败 rethrow）
+     无泄漏；emitter 返回前的早期 send 由 Spring earlySendAttempts 缓冲，
+     快速完成竞态安全；断线后 send 异常捕获吞掉——生成在锁内继续跑完、落库
+     照常，仅进度事件丢失（断线对账见第 22 条）
+   - 虚拟线程确认（用户疑问"Java21 能否正常用"）：虚拟线程是 JDK21 正式特性
+     （JEP 444），JDK24 的 JEP 491 只是放松 synchronized 钉住限制；项目既有
+     5 处虚拟线程用法（BaseWorkflowExecutor/VueProjectBuilder/AppServiceImpl
+     截图/CodeGenWorkflow×2）均 Java21 正常运行；钉住风险仅在 synchronized 块
+     内阻塞，本链路无（Redisson 是网络 I/O 锁非 monitor 锁）；虚拟线程不池化
+     （一任务一线程，池化反损其优势）
+
+28.【B7 前端接线定稿：开关定通道 / 按钮显示条件 / 二次确认与断线对账】
+    （2026-09-19 确认，F4 规格随之更新为"已实现"）
+   - 开关定通道（首条 initPrompt 归属，了结用户追问"首条 initPrompt 消息走哪"）：
+     开关=开时首条 initPrompt 一律走生成图，含首页显式选型直创的生成期应用——
+     通道由开关唯一决定、不留"开关=开却走直连"的例外。直创应用 codeGenType 已
+     锁定，RouterNode 跳过 AI 路由直接用锁定值（第 25 条），故"类型由谁定"与
+     "由谁执行"是两个独立问题、不冲突：图只在需要选型时才选型
+     （备选方案 B'显式选型优先（直创首条走直连）'评估后否决：会让"开关=开"
+     在首条消息上失效，用户困惑）
+   - 生成代码按钮显示条件改为 appMode=BASE（不再限定 workflowEnabled=false）：
+     开关=关 → 弹类型选择框走直连；开关=开 → 不弹框、think 预检后走生成图。
+     理由：第 23 条"端点为主、口令为辅"，端点为主就必须有按钮入口，否则开关=开
+     时只能靠打口令触发生成
+   - 首页"工作流未就绪"闸移除：该闸（HomePage 开关=开则禁用创建 + tooltip）成立
+     于 B6/B7 未就绪期，防 initPrompt 被占位逻辑拦下产出空白应用；两批就绪后
+     闸的前提消失，随之解除（第 17 条该表述同步失效）
+   - 直创应用"二次确认"刻意保留：首页选非构思模式时确认一次，跳转聊天页后首条
+     initPrompt 因无构思文档再弹一次预检确认——用户拍板保留，理由"本来就不鼓励
+     没有构思就生成，AI 误解人类意思的情形太多"，多一道确认更稳
+   - 断线对账维持 codeGenType 信号不变更：构思期应用判定准确（生成成功才落库
+     改值）；直创应用该字段生成前后皆非 BASE、信号失效，给"生成可能仍在进行，
+     请稍后刷新查看"的保守提示。后端不会中断（锁内必跑完并落库，第 22/27 条），
+     断的只是浏览器↔服务端这一段（网络抖动/代理/休眠/刷新），最坏结果仅是一句
+     偏保守提示、无数据损坏；备选方案（改用聊天记录作信号：成功后后端会落一条
+     AI 消息，对两类应用都准确）留档不实施
+   - 6 处历史类型错误随本次接线一并修复：3 处加判空守卫（generateCode 的
+     onmessage / business-error、handleError），不改运行时行为；根因
+     noUncheckedIndexedAccess（@vue/tsconfig）；npm run build 通过

@@ -17,6 +17,7 @@ import org.bsc.langgraph4j.prebuilt.MessagesStateGraph;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.function.Consumer;
 
 import static org.bsc.langgraph4j.StateGraph.END;
 import static org.bsc.langgraph4j.StateGraph.START;
@@ -90,17 +91,29 @@ public class CodeGenConcurrentWorkflow {
     }
 
     /**
-     * 执行并发工作流
+     * 执行并发工作流（演示/测试入口：仅传提示词）
+     * 业务侧请用 executeWorkflow(WorkflowContext, Consumer)，需传入应用维度的完整上下文
      */
     public WorkflowContext executeWorkflow(String originalPrompt) {
-        CompiledGraph<MessagesState<String>> workflow = createWorkflow();
         WorkflowContext initialContext = WorkflowContext.builder()
                 .originalPrompt(originalPrompt)
                 .currentStep("初始化")
                 .build();
+        return executeWorkflow(initialContext, null);
+    }
+
+    /**
+     * 执行并发工作流（业务入口：完整初始上下文 + 步骤回调）
+     *
+     * @param initialContext 初始上下文（工作流通道需带 appId / userId / codeGenType / thinkContext）
+     * @param stepCallback   每完成一个节点时的回调（可为 null），供工作流通道推送进度
+     * @return 终态上下文
+     */
+    public WorkflowContext executeWorkflow(WorkflowContext initialContext, Consumer<WorkflowContext> stepCallback) {
+        CompiledGraph<MessagesState<String>> workflow = createWorkflow();
         GraphRepresentation graph = workflow.getGraph(GraphRepresentation.Type.MERMAID);
         log.info("并发工作流图:\n{}", graph.content());
-        log.info("开始执行并发代码生成工作流");
+        log.info("开始执行并发代码生成工作流，appId: {}", initialContext.getAppId());
         WorkflowContext finalContext = null;
         int stepCounter = 1;
         // 配置并发执行
@@ -116,11 +129,18 @@ public class CodeGenConcurrentWorkflow {
         for (NodeOutput<MessagesState<String>> step : workflow.stream(
                 Map.of(WorkflowContext.WORKFLOW_CONTEXT_KEY, initialContext),
                 runnableConfig)) {
-            log.info("--- 第 {} 步完成 ---", stepCounter);
             WorkflowContext currentContext = WorkflowContext.getContext(step.state());
             if (currentContext != null) {
                 finalContext = currentContext;
-                log.info("当前步骤上下文: {}", currentContext);
+                log.info("--- 第 {} 步完成，当前步骤: {} ---", stepCounter, currentContext.getCurrentStep());
+                // 节点完成后回调（进度推送），回调异常不影响工作流执行
+                if (stepCallback != null) {
+                    try {
+                        stepCallback.accept(currentContext);
+                    } catch (Exception e) {
+                        log.error("工作流步骤回调执行失败: {}", e.getMessage(), e);
+                    }
+                }
             }
             stepCounter++;
         }

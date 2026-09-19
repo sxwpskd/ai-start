@@ -14,7 +14,7 @@
 
 ---
 
-# 一、项目架构理解（AI 助手整理于 2026-09-17，2026-09-18 补录 model 双体系等事实，2026-09-19 补录 B6 构思工作流通道；本人对该项目的长期理解基准）
+# 一、项目架构理解（AI 助手整理于 2026-09-17，2026-09-18 补录 model 双体系等事实，2026-09-19 补录 B6 构思工作流通道与 B7 生成工作流通道；本人对该项目的长期理解基准）
 
 ## 1. 项目定位
 AI 零代码应用生成平台（ai-start）：用户输入自然语言描述，由 AI Agent 自动完成素材搜集、代码生成、质量检查、项目构建，最终一键部署为可访问的 Web 应用。本仓库为纯后端服务（Spring Boot，端口 8100，context-path=/ai），前端为独立仓库。
@@ -30,10 +30,10 @@ AI 零代码应用生成平台（ai-start）：用户输入自然语言描述，
 
 ## 3. 包结构与职责（org.aistart）
 - controller：
-  - AppController：应用 CRUD、管理员接口（@AuthCheck）、SSE 聊天生码 GET /app/chat/gen/code（@RateLimit USER 5次/60s）、构思工作流 POST /app/chat/think/workflow（B6，同步阻塞，无限流）、ZIP 下载 /app/download/{appId}、部署 /app/deploy、精选应用列表（@Cacheable 缓存，pageNum<=10 才缓存）
+  - AppController：应用 CRUD、管理员接口（@AuthCheck）、SSE 聊天生码 GET /app/chat/gen/code（@RateLimit USER 5次/60s）、构思工作流 POST /app/chat/think/workflow（B6，同步阻塞，无限流）、生成工作流 GET /app/gen/workflow（B7，SseEmitter SSE：progress 节点进度 + 10s 心跳 → done/business-error）、构思预检 GET /app/think/exists（B7）、ZIP 下载 /app/download/{appId}、部署 /app/deploy、精选应用列表（@Cacheable 缓存，pageNum<=10 才缓存）
   - UserController / ChatHistoryController（时间游标分页查历史）/ StaticResourceController（生成站点预览）/ WorkflowSseController（LangGraph 工作流演示：同步 / Flux / SseEmitter 三种方式）
 - service：
-  - AppServiceImpl：创建应用时调 AI 智能路由选 codeGenType；chatToGenCode（校验权限→存用户消息→Facade 流式生成→StreamHandlerExecutor 收尾入库 AI 响应）；thinkWorkflow（B6 构思工作流通道：校验→鉴权→BASE 校验→先落用户消息→BaseWorkflowExecutor 同步执行→落 AI 回复全文）；deployApp（生成 6 位 deployKey→Vue 构建出 dist→复制到部署目录→更新库→虚拟线程异步截图上传 COS）；重写 removeById 级联删除对话历史
+  - AppServiceImpl：创建应用（codeGenType 空默认 BASE、首页显式选型直接落库；旧 AI 路由调用注释保留）；chatToGenCode（校验权限→存用户消息→Facade 流式生成→StreamHandlerExecutor 收尾入库 AI 响应；生成触发参数 + 成功后落库锁定）；thinkWorkflow（B6 构思工作流通道：校验→鉴权→BASE 校验→先落用户消息→BaseWorkflowExecutor 同步执行→落 AI 回复全文）；genWorkflow（B7 生成工作流通道：同步段校验鉴权→GenWorkflowExecutor 虚拟线程内 RLock 防重→先落用户消息→读 think 入 context→跑生成图→成功后统一落 codeGenType+genReply→finally 解锁）；deployApp（生成 6 位 deployKey→Vue 构建出 dist→复制到部署目录→更新库→虚拟线程异步截图上传 COS）；重写 removeById 级联删除对话历史
   - ChatHistoryServiceImpl：游标分页（lastCreateTime）、loadChatHistoryToMemory（DB 历史按时间正序灌入 LangChain4j MessageWindowChatMemory）
   - ScreenshotServiceImpl：Selenium 截图 + COS 上传；ProjectDownloadServiceImpl：ZIP 打包流式下载
 - model：业务数据模型三件套（entity / dto / vo + enums），与 ai/model（AI 输出模型）完全隔离、互不依赖——
@@ -67,9 +67,10 @@ AI 零代码应用生成平台（ai-start）：用户输入自然语言描述，
   - builder/VueProjectBuilder：Process API 执行 npm install/build，超时控制（install 5min / build 3min），Windows 下自动补 .cmd 后缀
   - handler：StreamHandlerExecutor / JsonMessageStreamHandler / SimpleTextStreamHandler，负责流结束后记录 AI 响应到对话历史
 - langgraph4j（工作流通道 + 三套演示工作流演进）：
-  - workflow/ 子包（B6 构思工作流通道，2026-09-19）：BaseWorkflow（START → rag 占位 → think → END）+ BaseWorkflowExecutor（@Component，静态虚拟线程池 + Future.get(10min) 超时 + 取终态 WorkflowContext）；node/ThinkNode（readThink 拼增强提示词 → 调无工具构思服务 → THINK_START/END 标记截取 → saveThink 成对重渲染；thinkReply 回填 context，不经 ai/tools）、node/RagNode（占位透传，B1/B2 恢复后补检索）
+  - workflow/ 子包（工作流通道执行器，2026-09-19）：BaseWorkflow（构思图：START → rag 占位 → think → END）+ BaseWorkflowExecutor（@Component，静态虚拟线程池 + Future.get(10min) 超时 + 取终态 WorkflowContext）+ GenWorkflowExecutor（B7 生成图执行器：submit(Supplier) → CompletableFuture，整段业务逻辑同虚拟线程执行——Redisson RLock 加解锁须同线程；超时改定时守门 cancel(true)，因 SSE 形态下请求线程已返回无人等 Future.get）
+  - node/ThinkNode（构思图：readThink 拼增强提示词 → 调无工具构思服务 → THINK_START/END 标记截取 → saveThink 成对重渲染；thinkReply 回填 context，不经 ai/tools）、node/RagNode（占位透传，B1/B2 恢复后补检索，两张图共用）
   - CodeGenWorkflow 基础版：image_collector → prompt_enhancer → router → code_generator → code_quality_check →（条件边 routeAfterQualityCheck：质检失败 fail 回 code_generator；通过且 VUE_PROJECT 走 build；其他 skip_build 结束）→ project_builder
-  - CodeGenConcurrentWorkflow 并发版：image_plan（AI 规划搜集任务）→ 4 个并发收集节点（content/illustration/diagram/logo）→ image_aggregator 汇聚 → 后续串行（2026-09-19 已在 router 后预埋 rag 占位：router → rag → code_generator）；RunnableConfig 配自定义并行线程池（Parallel-Image-Collect，核心10/最大20）
+  - CodeGenConcurrentWorkflow 并发版（B7 已接业务）：双入口——executeWorkflow(WorkflowContext, Consumer)（业务入口：完整初始上下文 + 节点完成回调供 SSE 进度）与 executeWorkflow(String)（演示入口，委托前者）；image_plan（AI 规划搜集任务）→ 4 个并发收集节点（content/illustration/diagram/logo）→ image_aggregator 汇聚 → prompt_enhancer → router（B7：生成期应用跳过 AI 路由直接用锁定类型；null/BASE 兜底 HTML；只写 context 不碰 DB）→ rag（占位）→ code_generator（B7：appId 取 context、thinkContext 独立拼接不回写 enhancedPrompt、流聚合进 genReply——VUE 经 JsonMessageStreamHandler.collectHistoryText 复用直连落库规则）→ 质检条件边 → project_builder；RunnableConfig 配自定义并行线程池（Parallel-Image-Collect，核心10/最大20）
   - CodeGenSubgraphWorkflow 子图版：4 类收集改为子图节点（与父图共享状态）并发执行
   - state/WorkflowContext：可序列化的全流程上下文，存于 MessagesState 的 "workflowContext" key
   - node：RouterNode、PromptEnhancerNode、CodeGeneratorNode（质检失败时用错误列表构造修复提示词重试）、CodeQualityCheckNode、ProjectBuilderNode；node/concurrent：ImagePlanNode、4 个收集节点、ImageAggregatorNode
@@ -82,11 +83,12 @@ AI 零代码应用生成平台（ai-start）：用户输入自然语言描述，
 - aop/AuthInterceptor + annotation/@AuthCheck：基于角色的权限校验；exception：BusinessException + ErrorCode + GlobalExceptionHandler + ThrowUtils
 
 ## 4. 核心业务流程
-1. 创建应用（POST /app/add）：AI 路由服务（结构化输出 + routing-prompt）根据 initPrompt 选择 codeGenType → 入库（appName 取前 12 字符）
+1. 创建应用（POST /app/add）：codeGenType 空值默认 BASE（构思期）、首页显式选型直接落库（决策记录第 17 条）→ 入库（appName 取前 12 字符；旧 AI 路由调用注释保留备查）
 2. 对话生成代码（GET /app/chat/gen/code，SSE）：登录校验 + 限流 → 存用户消息 → Facade → 工厂取（或建）AiCodeGeneratorService（Caffeine 缓存 + Redis 记忆 + DB 历史回灌）→ 流式输出给前端；流结束由 StreamHandlerExecutor 落库 AI 响应
 3. 部署（POST /app/deploy）：校验权限 → 生成 6 位 deployKey → Vue 项目构建 dist → 复制到 {CODE_DEPLOY_ROOT_DIR}/{deployKey} → 更新 deployKey/deployedTime → 返回 URL → 虚拟线程异步截图 + COS 上传 + 更新封面
-4. LangGraph 工作流（/workflow/*）：目前为独立演示链路，尚未与主业务（appId 维度）打通（CodeGeneratorNode 内 appId 暂为 0L，有 TODO 注释；2026-09-19 已在 router 后预埋 rag 占位插槽）
+4. LangGraph 工作流（/workflow/*）：独立演示链路（CodeGenWorkflow 三版本 + SSE 演示），未接主业务；业务工作流走 AppController 的两个通道端点（见 5/6）
 5. 构思工作流（POST /app/chat/think/workflow，B6 2026-09-19）：开关=开且 BASE 期 → thinkWorkflow 校验落库 → BaseWorkflowExecutor（虚拟线程+10min 超时）→ BaseWorkflow（rag 占位 → ThinkNode：readThink 注入 → 无工具 AI → THINK_START/END 标记截取 → saveThink 成对重渲染）→ 同步返回 thinkReply 并落库（编码完成，联调验收待做）
+6. 生成工作流（GET /app/gen/workflow，B7 2026-09-19）：开关=开触发生成 → genWorkflow 同步段校验鉴权 → GenWorkflowExecutor 虚拟线程内（RLock 按应用防重 → 先落用户消息 → 读 think 入 context.thinkContext → 生成图全流程 → 成功后统一落 codeGenType + genReply → finally 解锁）→ SSE 推送 progress（节点级 + 10s 心跳）→ done/business-error；超时 10min 定时守门中断；配套 GET /app/think/exists 预检端点（编码完成，前端接线与联调验收待做）
 
 ## 5. 关键约定速记
 - 目录约定：生成目录 {user.dir}/tmp/code_output/{codeGenType}_{appId}；部署目录 {user.dir}/tmp/code_deploy/{deployKey}

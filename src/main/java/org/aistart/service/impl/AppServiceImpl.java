@@ -18,8 +18,10 @@ import org.aistart.core.handler.StreamHandlerExecutor;
 import org.aistart.exception.BusinessException;
 import org.aistart.exception.ErrorCode;
 import org.aistart.exception.ThrowUtils;
+import org.aistart.langgraph4j.CodeGenConcurrentWorkflow;
 import org.aistart.langgraph4j.state.WorkflowContext;
 import org.aistart.langgraph4j.workflow.BaseWorkflowExecutor;
+import org.aistart.langgraph4j.workflow.GenWorkflowExecutor;
 import org.aistart.model.dto.app.AppAddRequest;
 import org.aistart.model.dto.app.AppQueryRequest;
 import org.aistart.model.entity.App;
@@ -34,6 +36,8 @@ import org.aistart.service.ChatHistoryService;
 import org.aistart.service.ScreenshotService;
 import org.aistart.service.UserService;
 import org.aistart.utils.ThinkFileUtils;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -45,6 +49,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
@@ -73,6 +79,15 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private AiCodeGenTypeRoutingServiceFactory aiCodeGenTypeRoutingServiceFactory;
     @Resource
     private BaseWorkflowExecutor baseWorkflowExecutor;
+    @Resource
+    private GenWorkflowExecutor genWorkflowExecutor;
+    @Resource
+    private RedissonClient redissonClient;
+
+    /**
+     * 生成防重锁的 key 前缀（按应用维度互斥，开发文档决策记录第 24 条）
+     */
+    private static final String GEN_LOCK_PREFIX = "gen_workflow:lock:";
 
 
     @Override
@@ -278,6 +293,121 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
             chatHistoryService.addChatMessage(appId, aiReply, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
         }
         return aiReply;
+    }
+
+    /**
+     * 生成期工作流（工作流通道 · 生成触发）
+     * 参数校验、应用查询与鉴权在请求线程完成（异常由全局处理器按 SSE 请求转为 business-error 事件）；
+     * 加锁、落库、跑图、解锁整段提交到虚拟线程执行（加锁与解锁必须同线程）
+     */
+    @Override
+    public CompletableFuture<WorkflowContext> genWorkflow(Long appId, String message, User loginUser,
+                                                          Consumer<WorkflowContext> stepCallback) {
+        // 1. 参数校验
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 不能为空");
+        ThrowUtils.throwIf(StrUtil.isBlank(message), ErrorCode.PARAMS_ERROR, "用户消息不能为空");
+        // 2. 查询应用信息
+        App app = this.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR, "应用不存在");
+        // 3. 验证用户是否有权限访问该应用，仅本人可以触发生成
+        if (!app.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限访问该应用");
+        }
+        // 4. 应用当前生成类型（空值兜底 BASE：历史应用视为构思期；生成期应用沿用已锁定类型）
+        CodeGenTypeEnum codeGenTypeEnum = resolveCodeGenType(app.getCodeGenType());
+        // 5. 整段业务逻辑提交虚拟线程：加锁与解锁必须同线程（Redisson RLock 按 threadId 记录持有者）
+        return genWorkflowExecutor.submit(() ->
+                runGenWorkflow(app, codeGenTypeEnum, message, loginUser, stepCallback));
+    }
+
+    /**
+     * 生成工作流异步段（运行在 GenWorkflowExecutor 的虚拟线程内）
+     * 加锁 → 先落用户消息 → 读构思 → 跑生成图 → 成功后统一落库 → 解锁
+     */
+    private WorkflowContext runGenWorkflow(App app, CodeGenTypeEnum codeGenType, String message,
+                                           User loginUser, Consumer<WorkflowContext> stepCallback) {
+        Long appId = app.getId();
+        Long userId = loginUser.getId();
+        // 按应用维度加锁：同一应用同时只允许一个生成（防双击与重复触发）
+        RLock lock = redissonClient.getLock(GEN_LOCK_PREFIX + appId);
+        // 不等待：拿不到立即失败——防重需要的是拒绝并发，而非排队
+        if (!lock.tryLock()) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "应用正在生成中，请稍候再试");
+        }
+        try {
+            // 1. 先落用户消息：记忆回灌靠"跳过最新一条"排除本轮消息，顺序不可反（决策记录第 20 条）
+            chatHistoryService.addChatMessage(appId, message, ChatHistoryMessageTypeEnum.USER.getValue(), userId);
+            // 2. 读构思文档入上下文：文件不存在则置空不拼（直创生成期应用无构思文档）
+            String thinkContext = ThinkFileUtils.existsThink(appId) ? ThinkFileUtils.readThink(appId) : null;
+            // 3. 构建初始上下文：路由依据为应用初始需求；构思全文用独立字段，不并入 originalPrompt
+            WorkflowContext initialContext = WorkflowContext.builder()
+                    .appId(appId)
+                    .userId(userId)
+                    .codeGenType(codeGenType)
+                    .thinkContext(thinkContext)
+                    .originalPrompt(app.getInitPrompt())
+                    .currentStep("初始化")
+                    .build();
+            // 4. 同步执行生成图（节点完成回调供 SSE 推送进度）
+            WorkflowContext resultContext = new CodeGenConcurrentWorkflow().executeWorkflow(initialContext, stepCallback);
+            ThrowUtils.throwIf(resultContext == null, ErrorCode.SYSTEM_ERROR, "生成工作流未返回结果");
+            // 5. 全图成功后统一落库（决策记录第 21 条）：生成类型单向锁定 + AI 回复全文
+            lockGenerationType(appId, resultContext);
+            saveGenReply(appId, userId, resultContext);
+            return resultContext;
+        } finally {
+            // 超时中断会置中断标志，解锁失败时由看门狗在约 30s 后自动过期兜底
+            try {
+                lock.unlock();
+            } catch (Exception e) {
+                log.error("生成工作流释放锁失败，appId: {}（锁将由看门狗自动过期）", appId, e);
+            }
+        }
+    }
+
+    /**
+     * 生成成功后落库生成类型（单向锁定；失败仅记日志，应用仍留构思期可重试）
+     */
+    private void lockGenerationType(Long appId, WorkflowContext context) {
+        CodeGenTypeEnum generationType = context.getGenerationType();
+        if (generationType == null) {
+            log.error("应用 {} 生成成功但未返回生成类型，codeGenType 未落库", appId);
+            return;
+        }
+        App updateApp = new App();
+        updateApp.setId(appId);
+        updateApp.setCodeGenType(generationType.getValue());
+        if (!this.updateById(updateApp)) {
+            log.error("应用 {} 生成成功但 codeGenType 落库失败，仍处构思期", appId);
+            return;
+        }
+        log.info("应用 {} 生成成功，codeGenType 已锁定为 {}", appId, generationType.getValue());
+    }
+
+    /**
+     * 生成回复全文落库（内容与直连通道一致；空内容不落库）
+     */
+    private void saveGenReply(Long appId, Long userId, WorkflowContext context) {
+        String genReply = context.getGenReply();
+        if (StrUtil.isBlank(genReply)) {
+            log.warn("生成工作流未产出可落库的 AI 回复，appId: {}", appId);
+            return;
+        }
+        chatHistoryService.addChatMessage(appId, genReply, ChatHistoryMessageTypeEnum.AI.getValue(), userId);
+    }
+
+    /**
+     * 解析应用当前生成类型：空值兜底 BASE（历史应用视为构思期），非空但非法则抛错、不吞脏数据
+     */
+    private CodeGenTypeEnum resolveCodeGenType(String codeGenTypeStr) {
+        CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(codeGenTypeStr);
+        if (codeGenTypeEnum != null) {
+            return codeGenTypeEnum;
+        }
+        if (StrUtil.isBlank(codeGenTypeStr)) {
+            return CodeGenTypeEnum.BASE;
+        }
+        throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
     }
 
 /**

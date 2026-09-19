@@ -65,7 +65,7 @@
                 <MarkdownRenderer v-if="message.content" :content="message.content" />
                 <div v-if="message.loading" class="loading-indicator">
                   <a-spin size="small" />
-                  <span>AI 正在思考...</span>
+                  <span>{{ aiLoadingText }}</span>
                 </div>
               </div>
             </div>
@@ -200,7 +200,7 @@
           </div>
           <div v-else-if="workflowStore.generating" class="preview-loading">
             <a-spin size="large" />
-            <p>正在生成网站...</p>
+            <p>{{ genProgressText || '正在生成网站...' }}</p>
           </div>
           <iframe
             v-else
@@ -251,7 +251,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { useLoginUserStore } from '@/stores/loginUser'
 import { useWorkflowStore } from '@/stores/workflow'
 import {
@@ -316,6 +316,44 @@ const historyLoaded = ref(false)
 // 预览相关
 const previewUrl = ref('')
 const previewReady = ref(false)
+
+// 工作流生成进度文案（阶段 + 已耗时，来自后端 progress 事件）
+const genProgressText = ref('')
+
+/**
+ * 工作流节点（后端 currentStep）→ 用户可读阶段文案
+ */
+const WORKFLOW_STEP_TEXT_MAP: Record<string, string> = {
+  初始化: '准备中',
+  图片计划: '规划素材搜集',
+  内容图片收集: '搜集内容图片',
+  插画图片收集: '搜集插画',
+  架构图生成: '绘制架构图',
+  Logo生成: '生成 Logo',
+  图片聚合: '整理素材',
+  提示词增强: '优化生成提示词',
+  智能路由: '分析需求、选择生成方案',
+  RAG检索: '检索参考资料',
+  代码生成: '生成代码',
+  代码质量检查: '检查代码质量',
+  项目构建: '构建项目',
+}
+
+// AI 气泡等待文案：工作流生成期间同步展示后端当前运行节点（含已耗时），
+// 其余场景（直连通道、构思工作流）回落为通用思考提示
+const aiLoadingText = computed(() => {
+  if (workflowStore.generating && genProgressText.value) {
+    return genProgressText.value
+  }
+  return 'AI 正在思考...'
+})
+
+// 生成触发的固定文案（直连 F2 与工作流通道按钮共用）
+const GEN_CODE_MESSAGE = '请根据以上构思，生成代码'
+
+// 工作流通道专属触发口令（前端硬编码识别，后端不解析文案）
+const WORKFLOW_TRIGGER_COMMAND = '我已明确我的需求，现在生成代码'
+
 // iframe 的 :key——构思期预览地址前后不变（同为 base_{appId}/），
 // 地址不变时 Vue 不会重新加载 iframe，靠改变 key 强制重建
 const previewKey = ref(0)
@@ -346,10 +384,9 @@ const isAdmin = computed(() => {
   return loginUserStore.loginUser.userRole === 'admin'
 })
 
-// F2 生成代码按钮显示条件：开关=关 && 构思期（appMode 由 codeGenType 派生，空=BASE）
-const showGenCodeButton = computed(
-  () => !workflowStore.workflowEnabled && workflowStore.appMode === 'BASE'
-)
+// 生成代码按钮显示条件：构思期（appMode 由 codeGenType 派生，空=BASE）
+// 开关=关 → 点击弹类型选择框走直连；开关=开 → 直接走工作流通道（类型由 RouterNode 决定）
+const showGenCodeButton = computed(() => workflowStore.appMode === 'BASE')
 
 // 应用详情相关
 const appDetailVisible = ref(false)
@@ -460,16 +497,17 @@ const fetchAppInfo = async () => {
 
 // 发送初始消息
 const sendInitialMessage = async (prompt: string) => {
-  // F1：工作流开关=开 → 工作流通道（B6：构思期走构思工作流；生成期仍占位，B7 接管）
+  // F1：工作流开关=开 → 工作流通道（构思期走构思图；生成期直创应用首次生成走生成图）
   if (workflowStore.workflowEnabled) {
-    // 原占位逻辑（构思期已接入真实调用，生成期待 B7）
+    // 原占位逻辑（构思期/生成期均已接入真实调用）
     // message.info('工作流待转正')
     // return
     if (workflowStore.appMode === 'BASE') {
       await sendMessageByWorkflow(prompt)
       return
     }
-    message.info('工作流待转正')
+    // 首页显式选型直创的生成期应用：类型已锁定，RouterNode 跳过 AI 路由直接用锁定值
+    await triggerWorkflowGenerate(prompt)
     return
   }
 
@@ -516,24 +554,25 @@ const sendMessage = async () => {
     sendContent += elementContext
   }
 
-  // F1：工作流开关=开 → 工作流通道（B6：构思期走构思工作流；生成期仍占位，B7 接管）
-  if (workflowStore.workflowEnabled) {
-    // 原占位逻辑（构思期已接入真实调用，生成期待 B7）
+  // F1：开关=开 + 构思期 → 工作流通道（口令走生成图，普通消息走构思图）；
+  // 其余情况（开关=关，或开关=开但已是生成期）→ 直连通道（生成后改码恒走直连）
+  if (workflowStore.workflowEnabled && workflowStore.appMode === 'BASE') {
+    // 原占位逻辑（构思期/生成期均已接入真实调用）
     // message.info('工作流待转正')
     // return
-    if (workflowStore.appMode === 'BASE') {
-      userInput.value = ''
-      // 发送消息后，清除选中元素并退出编辑模式
-      if (selectedElementInfo.value) {
-        clearSelectedElement()
-        if (isEditMode.value) {
-          toggleEditMode()
-        }
+    userInput.value = ''
+    // 发送消息后，清除选中元素并退出编辑模式
+    if (selectedElementInfo.value) {
+      clearSelectedElement()
+      if (isEditMode.value) {
+        toggleEditMode()
       }
-      await sendMessageByWorkflow(sendContent)
-      return
     }
-    message.info('工作流待转正')
+    if (isWorkflowTriggerCommand(sendContent)) {
+      await triggerWorkflowGenerate(sendContent)
+    } else {
+      await sendMessageByWorkflow(sendContent)
+    }
     return
   }
 
@@ -612,8 +651,11 @@ const generateCode = async (
         // 拼接内容
         if (content !== undefined && content !== null) {
           fullContent += content
-          messages.value[aiMessageIndex].content = fullContent
-          messages.value[aiMessageIndex].loading = false
+          const aiMessage = messages.value[aiMessageIndex]
+          if (aiMessage) {
+            aiMessage.content = fullContent
+            aiMessage.loading = false
+          }
           scrollToBottom()
         }
       } catch (error) {
@@ -647,8 +689,11 @@ const generateCode = async (
 
         // 显示具体的错误信息
         const errorMessage = errorData.message || '生成过程中出现错误'
-        messages.value[aiMessageIndex].content = `❌ ${errorMessage}`
-        messages.value[aiMessageIndex].loading = false
+        const aiMessage = messages.value[aiMessageIndex]
+        if (aiMessage) {
+          aiMessage.content = `❌ ${errorMessage}`
+          aiMessage.loading = false
+        }
         message.error(errorMessage)
 
         streamCompleted = true
@@ -740,11 +785,173 @@ const sendMessageByWorkflow = async (content: string) => {
   }
 }
 
+// 判断是否为工作流生成触发口令（前端识别，后端不解析文案）
+const isWorkflowTriggerCommand = (content: string) => content.trim() === WORKFLOW_TRIGGER_COMMAND
+
+// 工作流通道生成触发：先做构思文档存在性预检，无构思文档时二次确认
+const triggerWorkflowGenerate = async (content: string) => {
+  if (workflowStore.generating) {
+    return
+  }
+  const thinkMissing = await isThinkMissing()
+  if (!thinkMissing) {
+    await startWorkflowGenerate(content)
+    return
+  }
+  Modal.confirm({
+    title: '确认直接生成代码？',
+    content: '当前应用还没有构思文档，将直接按初始需求生成代码，确定继续吗？',
+    okText: '开始生成',
+    cancelText: '再想想',
+    onOk: () => startWorkflowGenerate(content),
+  })
+}
+
+// 查询构思文档是否存在（预检接口异常时按"存在"处理，避免多余弹窗阻断生成）
+const isThinkMissing = async (): Promise<boolean> => {
+  try {
+    const res = await request<API.BaseResponseBoolean>('/app/think/exists', {
+      method: 'GET',
+      params: { appId: appId.value },
+    })
+    return res.data.code === 0 && res.data.data === false
+  } catch (error) {
+    console.error('构思文档存在性预检失败：', error)
+    return false
+  }
+}
+
+// 工作流通道生成：推送用户消息与 AI 占位 → 建立 SSE 接收进度
+const startWorkflowGenerate = async (content: string) => {
+  // 记录生成前的模式：构思期应用生成成功后 codeGenType 才会变，用于断线对账判定
+  const wasBase = workflowStore.appMode === 'BASE'
+
+  // 添加用户消息
+  messages.value.push({
+    type: 'user',
+    content,
+  })
+
+  // 添加AI消息占位符
+  const aiMessageIndex = messages.value.length
+  messages.value.push({
+    type: 'ai',
+    content: '',
+    loading: true,
+  })
+
+  await nextTick()
+  scrollToBottom()
+
+  workflowStore.generating = true
+  genProgressText.value = '准备中'
+  generateByWorkflow(content, aiMessageIndex, wasBase)
+}
+
+// 工作流通道生成（SSE 进度推送）：progress 更新阶段文案；done 刷新预览；business-error 提示失败
+const generateByWorkflow = (content: string, aiMessageIndex: number, wasBase: boolean) => {
+  let eventSource: EventSource | null = null
+  let streamCompleted = false
+
+  // 终态收尾：复位状态并关闭连接
+  const finish = () => {
+    streamCompleted = true
+    workflowStore.generating = false
+    genProgressText.value = ''
+    eventSource?.close()
+  }
+
+  const baseURL = request.defaults.baseURL || API_BASE_URL
+  const params = new URLSearchParams({
+    appId: appId.value || '',
+    message: content,
+  })
+  eventSource = new EventSource(`${baseURL}/app/gen/workflow?${params}`, {
+    withCredentials: true,
+  })
+
+  // 进度事件：节点完成即推 + 10s 心跳（阶段文案 + 已耗时）
+  eventSource.addEventListener('progress', (event: MessageEvent) => {
+    if (streamCompleted) return
+    try {
+      const progress = JSON.parse(event.data)
+      const stepText = WORKFLOW_STEP_TEXT_MAP[progress.step] || progress.step || '生成中'
+      const elapsedSecond = Math.round((progress.elapsedMs || 0) / 1000)
+      genProgressText.value = `${stepText}（已耗时 ${elapsedSecond} 秒）`
+    } catch (error) {
+      console.error('解析进度事件失败：', error)
+    }
+  })
+
+  // 生成成功：后端已完成 codeGenType 落库与 AI 回复落库，刷新应用信息与预览
+  eventSource.addEventListener('done', () => {
+    if (streamCompleted) return
+    finish()
+    setTimeout(async () => {
+      await fetchAppInfo()
+      updatePreview()
+      previewKey.value++
+    }, 300)
+  })
+
+  // 业务错误（应用正在生成中 / 图内异常 / 超时等）
+  eventSource.addEventListener('business-error', (event: MessageEvent) => {
+    if (streamCompleted) return
+    let errorMessage = '生成失败，请重试'
+    try {
+      const errorData = JSON.parse(event.data)
+      errorMessage = errorData.message || errorMessage
+    } catch (parseError) {
+      console.error('解析错误事件失败：', parseError, '原始数据:', event.data)
+    }
+    const aiMessage = messages.value[aiMessageIndex]
+    if (aiMessage) {
+      aiMessage.content = `❌ ${errorMessage}`
+      aiMessage.loading = false
+    }
+    message.error(errorMessage)
+    finish()
+  })
+
+  // 连接中断：重查应用详情对账——构思期应用 codeGenType 已变即视为成功
+  eventSource.onerror = async () => {
+    if (streamCompleted) return
+    try {
+      const res = await getAppVoById({ id: appId.value as unknown as number })
+      const latestType = res.data.data?.codeGenType
+      if (wasBase && latestType && latestType !== CodeGenTypeEnum.BASE) {
+        // 后端实际已生成成功（锁内跑完照常落库），按成功处理
+        finish()
+        await fetchAppInfo()
+        updatePreview()
+        previewKey.value++
+        message.success('生成已完成')
+        return
+      }
+    } catch (error) {
+      console.error('生成结果对账失败：', error)
+    }
+    const aiMessage = messages.value[aiMessageIndex]
+    const tipText = wasBase
+      ? '连接中断，生成未完成，可重试'
+      : '连接中断，生成可能仍在进行，请稍后刷新查看'
+    if (aiMessage) {
+      aiMessage.content = `❌ ${tipText}`
+      aiMessage.loading = false
+    }
+    message.warning(tipText)
+    finish()
+  }
+}
+
 // 错误处理函数
 const handleError = (error: unknown, aiMessageIndex: number) => {
   console.error('生成代码失败：', error)
-  messages.value[aiMessageIndex].content = '抱歉，生成过程中出现了错误，请重试。'
-  messages.value[aiMessageIndex].loading = false
+  const aiMessage = messages.value[aiMessageIndex]
+  if (aiMessage) {
+    aiMessage.content = '抱歉，生成过程中出现了错误，请重试。'
+    aiMessage.loading = false
+  }
   message.error('生成失败，请重试')
   workflowStore.generating = false
 }
@@ -754,8 +961,12 @@ const onWorkflowSwitchChange = (checked: boolean | string | number) => {
   workflowStore.setWorkflowEnabled(Boolean(checked))
 }
 
-// F2：打开生成代码类型弹窗
+// F2：生成代码按钮——开关=关弹类型选择框；开关=开直接走工作流通道（类型由 RouterNode 决定）
 const openCodeGenModal = () => {
+  if (workflowStore.workflowEnabled) {
+    triggerWorkflowGenerate(GEN_CODE_MESSAGE)
+    return
+  }
   codeGenModalVisible.value = true
 }
 
@@ -770,7 +981,7 @@ const confirmCodeGen = async () => {
 
 // F2：触发生成（固定文案；后端读 think 拼接增强提示词，成功后锁定 codeGenType）
 const startGenerateCode = async (codeGenType: CodeGenTypeEnum) => {
-  const fixedMessage = '请根据以上构思，生成代码'
+  const fixedMessage = GEN_CODE_MESSAGE
 
   // 添加用户消息（固定文案）
   messages.value.push({

@@ -107,7 +107,7 @@ const doCreateApp = async () => {
   }
 }
 
-// F1：工作流开关切换（全局持久化；B6/B7 未就绪期间开启则禁用创建）
+// F1：工作流开关切换（全局持久化）
 const onWorkflowSwitchChange = (checked: boolean | string | number) => {
   workflowStore.setWorkflowEnabled(Boolean(checked))
 }
@@ -223,7 +223,7 @@ onMounted(() => {
             :options="codeGenTypeOptions"
             :disabled="creating"
           />
-          <!-- F1 工作流开关（全局用户级；B6/B7 未就绪期间开启则禁用创建） -->
+          <!-- F1 工作流开关（全局用户级） -->
           <div class="workflow-switch">
             <span class="workflow-switch-label">工作流</span>
             <a-switch
@@ -233,23 +233,19 @@ onMounted(() => {
               @change="onWorkflowSwitchChange"
             />
           </div>
-          <a-tooltip
-            :title="workflowStore.workflowEnabled ? '工作流未就绪，请先关闭工作流开关' : ''"
-          >
-            <span class="create-btn-wrapper">
-              <a-button
-                type="primary"
-                size="large"
-                @click="createApp"
-                :loading="creating"
-                :disabled="workflowStore.workflowEnabled"
-              >
-                <template #icon>
-                  <span>↑</span>
-                </template>
-              </a-button>
-            </span>
-          </a-tooltip>
+          <!-- 原「工作流未就绪」闸已移除：B6/B7 就绪，开关=开时首条 initPrompt 也由图执行 -->
+          <span class="create-btn-wrapper">
+            <a-button
+              type="primary"
+              size="large"
+              @click="createApp"
+              :loading="creating"
+            >
+              <template #icon>
+                <span>↑</span>
+              </template>
+            </a-button>
+          </span>
         </div>
       </div>
 
