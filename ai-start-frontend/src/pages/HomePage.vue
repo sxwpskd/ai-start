@@ -1,18 +1,32 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { useLoginUserStore } from '@/stores/loginUser'
+import { useWorkflowStore } from '@/stores/workflow'
 import { addApp, listMyAppVoByPage, listGoodAppVoByPage } from '@/api/appController'
 import { getDeployUrl } from '@/config/env'
+import { CodeGenTypeEnum } from '@/utils/codeGenTypes'
 import AppCard from '@/components/AppCard.vue'
 
 const router = useRouter()
 const loginUserStore = useLoginUserStore()
+const workflowStore = useWorkflowStore()
 
 // 用户提示词
 const userPrompt = ref('')
 const creating = ref(false)
+
+// 新建应用时的初始生成类型（默认构思期；选非构思模式则创建即锁定、跳过构思期）
+const selectedCodeGenType = ref<string>(CodeGenTypeEnum.BASE)
+
+// 生成类型选项（BASE 按用户体感写作"先构思，再生成"）
+const codeGenTypeOptions = [
+  { label: '先构思，再生成', value: CodeGenTypeEnum.BASE },
+  { label: '原生 HTML 模式', value: CodeGenTypeEnum.HTML },
+  { label: '原生多文件模式', value: CodeGenTypeEnum.MULTI_FILE },
+  { label: 'Vue 项目模式', value: CodeGenTypeEnum.VUE_PROJECT },
+]
 
 // 我的应用数据
 const myApps = ref<API.AppVO[]>([])
@@ -37,7 +51,7 @@ const setPrompt = (prompt: string) => {
 
 // 优化提示词功能已移除
 
-// 创建应用
+// 创建应用（选非构思模式为创建即单向锁定，先二次确认防误操作）
 const createApp = async () => {
   if (!userPrompt.value.trim()) {
     message.warning('请输入应用描述')
@@ -50,10 +64,31 @@ const createApp = async () => {
     return
   }
 
+  // 非构思期：跳过构思直接生成，创建后无法更改生成模式
+  if (selectedCodeGenType.value !== CodeGenTypeEnum.BASE) {
+    const typeLabel = codeGenTypeOptions.find(
+      (item) => item.value === selectedCodeGenType.value,
+    )?.label
+    Modal.confirm({
+      title: '确认直接生成代码？',
+      content: `将按「${typeLabel}」直接生成代码，创建后无法更改生成模式，也无法回到构思期。`,
+      okText: '开始生成',
+      cancelText: '再想想',
+      onOk: () => doCreateApp(),
+    })
+    return
+  }
+
+  await doCreateApp()
+}
+
+// 执行创建请求
+const doCreateApp = async () => {
   creating.value = true
   try {
     const res = await addApp({
       initPrompt: userPrompt.value.trim(),
+      codeGenType: selectedCodeGenType.value,
     })
 
     if (res.data.code === 0 && res.data.data) {
@@ -70,6 +105,11 @@ const createApp = async () => {
   } finally {
     creating.value = false
   }
+}
+
+// F1：工作流开关切换（全局持久化；B6/B7 未就绪期间开启则禁用创建）
+const onWorkflowSwitchChange = (checked: boolean | string | number) => {
+  workflowStore.setWorkflowEnabled(Boolean(checked))
 }
 
 // 加载我的应用
@@ -175,11 +215,41 @@ onMounted(() => {
           class="prompt-input"
         />
         <div class="input-actions">
-          <a-button type="primary" size="large" @click="createApp" :loading="creating">
-            <template #icon>
-              <span>↑</span>
-            </template>
-          </a-button>
+          <!-- 新建时的初始生成类型（选非构思模式需二次确认，创建即锁定） -->
+          <a-select
+            v-model:value="selectedCodeGenType"
+            size="small"
+            class="code-gen-type-select"
+            :options="codeGenTypeOptions"
+            :disabled="creating"
+          />
+          <!-- F1 工作流开关（全局用户级；B6/B7 未就绪期间开启则禁用创建） -->
+          <div class="workflow-switch">
+            <span class="workflow-switch-label">工作流</span>
+            <a-switch
+              size="small"
+              :checked="workflowStore.workflowEnabled"
+              :disabled="creating"
+              @change="onWorkflowSwitchChange"
+            />
+          </div>
+          <a-tooltip
+            :title="workflowStore.workflowEnabled ? '工作流未就绪，请先关闭工作流开关' : ''"
+          >
+            <span class="create-btn-wrapper">
+              <a-button
+                type="primary"
+                size="large"
+                @click="createApp"
+                :loading="creating"
+                :disabled="workflowStore.workflowEnabled"
+              >
+                <template #icon>
+                  <span>↑</span>
+                </template>
+              </a-button>
+            </span>
+          </a-tooltip>
         </div>
       </div>
 
@@ -453,7 +523,8 @@ onMounted(() => {
   border-radius: 16px;
   border: none;
   font-size: 16px;
-  padding: 20px 60px 20px 20px;
+  /* 右侧预留：生成类型选择器 + 工作流开关 + 创建按钮 */
+  padding: 20px 300px 20px 20px;
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(20px);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
@@ -472,6 +543,32 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/* 新建生成类型选择器 */
+.code-gen-type-select {
+  width: 150px;
+}
+
+/* F1 工作流开关 */
+.workflow-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(15px);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.workflow-switch-label {
+  font-size: 13px;
+  color: #475569;
+}
+
+.create-btn-wrapper {
+  display: inline-flex;
 }
 
 /* 快捷按钮 */
@@ -571,6 +668,21 @@ onMounted(() => {
 
   .quick-actions {
     justify-content: center;
+  }
+
+  /* 小屏：操作区改为输入框下方独立一行，避免遮挡输入文字 */
+  .prompt-input {
+    padding-right: 20px;
+  }
+
+  .input-actions {
+    position: static;
+    justify-content: flex-end;
+    margin-top: 8px;
+  }
+
+  .code-gen-type-select {
+    width: 140px;
   }
 }
 </style>

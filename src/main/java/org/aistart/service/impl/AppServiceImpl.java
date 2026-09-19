@@ -18,6 +18,8 @@ import org.aistart.core.handler.StreamHandlerExecutor;
 import org.aistart.exception.BusinessException;
 import org.aistart.exception.ErrorCode;
 import org.aistart.exception.ThrowUtils;
+import org.aistart.langgraph4j.state.WorkflowContext;
+import org.aistart.langgraph4j.workflow.BaseWorkflowExecutor;
 import org.aistart.model.dto.app.AppAddRequest;
 import org.aistart.model.dto.app.AppQueryRequest;
 import org.aistart.model.entity.App;
@@ -31,6 +33,7 @@ import org.aistart.service.AppService;
 import org.aistart.service.ChatHistoryService;
 import org.aistart.service.ScreenshotService;
 import org.aistart.service.UserService;
+import org.aistart.utils.ThinkFileUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -68,6 +71,8 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private ScreenshotService screenshotService;
     @Resource
     private AiCodeGenTypeRoutingServiceFactory aiCodeGenTypeRoutingServiceFactory;
+    @Resource
+    private BaseWorkflowExecutor baseWorkflowExecutor;
 
 
     @Override
@@ -81,13 +86,20 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         app.setUserId(loginUser.getId());
         // 应用名称暂时为 initPrompt 前 12 位
         app.setAppName(initPrompt.substring(0, Math.min(initPrompt.length(), 12)));
-        // 使用 AI 智能选择代码生成类型（多例模式）
-        AiCodeGenTypeRoutingService routingService = aiCodeGenTypeRoutingServiceFactory.createAiCodeGenTypeRoutingService();
-        CodeGenTypeEnum selectedCodeGenType = routingService.routeCodeGenType(initPrompt);
+        // 初始生成类型：为空默认构思期（BASE，生成类型由"生成代码"触发时选定）；
+        // 非空必须是合法模式——前端首页显式选型（跳过构思期直接生成），创建即单向锁定
+        String initCodeGenType = appAddRequest.getCodeGenType();
+        CodeGenTypeEnum initTypeEnum = CodeGenTypeEnum.getEnumByValue(initCodeGenType);
+        ThrowUtils.throwIf(StrUtil.isNotBlank(initCodeGenType) && initTypeEnum == null,
+                ErrorCode.PARAMS_ERROR, "不支持的代码生成类型：" + initCodeGenType);
+        app.setCodeGenType(initTypeEnum == null ? CodeGenTypeEnum.BASE.getValue() : initTypeEnum.getValue());
+        // 旧的创建时 AI 路由选型保留备查（历史上结果只 log 未落库，实际未生效）
+        // AiCodeGenTypeRoutingService routingService = aiCodeGenTypeRoutingServiceFactory.createAiCodeGenTypeRoutingService();
+        // CodeGenTypeEnum selectedCodeGenType = routingService.routeCodeGenType(initPrompt);
         // 插入数据库
         boolean result = this.save(app);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
-        log.info("应用创建成功，ID: {}, 类型: {}", app.getId(), selectedCodeGenType.getValue());
+        log.info("应用创建成功，ID: {}, 类型: {}", app.getId(), app.getCodeGenType());
         return app.getId();
     }
 
@@ -155,7 +167,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     }
 
     @Override
-    public Flux<String> chatToGenCode(Long appId, String message, User loginUser) {
+    public Flux<String> chatToGenCode(Long appId, String message, String codeGenType, User loginUser) {
         // 1. 参数校验
         ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 不能为空");
         ThrowUtils.throwIf(StrUtil.isBlank(message), ErrorCode.PARAMS_ERROR, "用户消息不能为空");
@@ -176,15 +188,96 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
             }
         }
-        // 5. 通过校验后，添加用户消息到对话历史
+        // 5. 生成触发：可选参数指定目标模式（四种等价模式的切换，决策记录第 16 条）
+        // 仅构思期（BASE）可触发；已在生成期时忽略参数按现有类型走，前端按钮成功即隐藏
+        CodeGenTypeEnum targetTypeEnum = null;
+        if (StrUtil.isNotBlank(codeGenType)) {
+            CodeGenTypeEnum paramTypeEnum = CodeGenTypeEnum.getEnumByValue(codeGenType);
+            // 非空但非法/传 BASE 均拒绝，不吞脏数据
+            ThrowUtils.throwIf(paramTypeEnum == null || paramTypeEnum == CodeGenTypeEnum.BASE,
+                    ErrorCode.PARAMS_ERROR, "不支持的代码生成类型");
+            if (codeGenTypeEnum == CodeGenTypeEnum.BASE) {
+                targetTypeEnum = paramTypeEnum;
+            }
+        }
+        // 6. 确定本次请求实际使用的模式与发给 AI 的消息
+        // 生成触发：读构思全文拼增强提示词（think 文件不存在时 readThink 返回提示文本）；
+        // 落库的用户消息仍为原始文案，构思全文不重复进聊天记录
+        CodeGenTypeEnum actualTypeEnum = codeGenTypeEnum;
+        String aiMessage = message;
+        if (targetTypeEnum != null) {
+            actualTypeEnum = targetTypeEnum;
+            aiMessage = message + "\n\n以下是当前的应用构思文档：\n" + ThinkFileUtils.readThink(appId);
+        }
+        // 7. 通过校验后，添加用户消息到对话历史
         chatHistoryService.addChatMessage(appId, message, ChatHistoryMessageTypeEnum.USER.getValue(), loginUser.getId());
-        // 6. 调用 AI 生成代码（流式）
-        Flux<String> contentFlux = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId);
-        // 7. 收集AI响应内容并在完成后记录到对话历史
-        return streamHandlerExecutor.doExecute(contentFlux, chatHistoryService, appId, loginUser, codeGenTypeEnum);
+        // 8. 调用 AI 生成代码（流式）
+        Flux<String> contentFlux = aiCodeGeneratorFacade.generateAndSaveCodeStream(aiMessage, actualTypeEnum, appId);
+        // 9. 收集AI响应内容并在完成后记录到对话历史
+        Flux<String> handledFlux = streamHandlerExecutor.doExecute(contentFlux, chatHistoryService, appId, loginUser, actualTypeEnum);
+        // 10. 生成成功后落库目标类型：单向锁定（阶段体感的锚点——失败留构思期可重选）
+        if (targetTypeEnum != null) {
+            CodeGenTypeEnum lockedTypeEnum = targetTypeEnum;
+            return handledFlux.doOnComplete(() -> {
+                App updateApp = new App();
+                updateApp.setId(appId);
+                updateApp.setCodeGenType(lockedTypeEnum.getValue());
+                boolean updated = this.updateById(updateApp);
+                // 流已完成，此处异常无法回传前端，落库失败仅记录日志（下次触发仍可重试）
+                if (!updated) {
+                    log.error("应用 {} 生成成功但 codeGenType 落库失败，仍处构思期", appId);
+                    return;
+                }
+                log.info("应用 {} 生成成功，codeGenType 已锁定为 {}", appId, lockedTypeEnum.getValue());
+            });
+        }
+        return handledFlux;
 
         // 5. 调用 AI 生成代码
         //return  aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId);
+    }
+
+    /**
+     * 构思期（BASE）工作流对话（工作流通道 · 同步阻塞，非流式）
+     * 与直连通道的区别：不经 Facade/流式链路，改由 LangGraph4j 编排（rag 占位 → 构思生成）
+     */
+    @Override
+    public String thinkWorkflow(Long appId, String message, User loginUser) {
+        // 1. 参数校验
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 不能为空");
+        ThrowUtils.throwIf(StrUtil.isBlank(message), ErrorCode.PARAMS_ERROR, "用户消息不能为空");
+        // 2. 查询应用信息
+        App app = this.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR, "应用不存在");
+        // 3. 验证用户是否有权限访问该应用，仅本人可以对话
+        if (!app.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限访问该应用");
+        }
+        // 4. 获取应用的代码生成类型（空值兜底为 BASE：历史应用视为构思期，兼容旧数据）
+        String codeGenTypeStr = app.getCodeGenType();
+        CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(codeGenTypeStr);
+        if (codeGenTypeEnum == null) {
+            if (StrUtil.isBlank(codeGenTypeStr)) {
+                codeGenTypeEnum = CodeGenTypeEnum.BASE;
+            } else {
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
+            }
+        }
+        // 5. 仅构思期可走构思工作流（前端仅在构思期显示入口，此处为防御）
+        ThrowUtils.throwIf(codeGenTypeEnum != CodeGenTypeEnum.BASE,
+                ErrorCode.PARAMS_ERROR, "应用已进入生成期，无法执行构思工作流");
+        // 6. 先落库用户消息：记忆回灌会跳过最新一条（limit(1, maxCount)），
+        // 靠它排除的正是本轮消息，否则会误吞一条真实历史
+        chatHistoryService.addChatMessage(appId, message, ChatHistoryMessageTypeEnum.USER.getValue(), loginUser.getId());
+        // 7. 同步阻塞执行构思工作流（虚拟线程 + 超时控制）
+        WorkflowContext resultContext = baseWorkflowExecutor.execute(appId, loginUser.getId(), codeGenTypeEnum, message);
+        ThrowUtils.throwIf(resultContext == null, ErrorCode.SYSTEM_ERROR, "构思工作流未返回结果");
+        String aiReply = resultContext.getThinkReply();
+        // 8. AI 回复落库（执行完成后落库，内容与前端展示一致）
+        if (StrUtil.isNotBlank(aiReply)) {
+            chatHistoryService.addChatMessage(appId, aiReply, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
+        }
+        return aiReply;
     }
 
 /**

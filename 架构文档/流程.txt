@@ -1,6 +1,10 @@
 # 业务流程：数据流转与状态机（行为层 · 【现有】与【目标】对照）
 
-更新时间：2026-09-18（09-17 文档体系重构；09-18 增补可视化编辑闭环与 readThink 双工具）
+更新时间：2026-09-19（B6 构思工作流通道编码完成：新增 2.6 流程实录、3.2 标注
+已实现、通道矩阵与对照表同步；决策见 开发文档.txt 决策记录第 18/19/20 条）
+（前次 2026-09-18：09-17 文档体系重构；增补可视化编辑闭环与 readThink 双工具、
+BASE 模式认知澄清：阶段为体感、实现为等价模式，见 开发文档.txt 决策记录第 16 条、
+SSE 消息协议与数据模型事实补录）
 关联文档：架构文档/当前对项目架构的整理与理解.txt（架构基准）、
 架构文档/当前目标.txt（战略层 · 阶段目标）、
 架构文档/开发文档.txt（执行+验收层 · 决策记录）
@@ -20,7 +24,10 @@
 长期事实只住架构基准。内容冲突时仲裁顺序：代码 > 开发文档.txt 决策 > 其他文档。
 
 阅读前提（决策摘要，依据与细节见 开发文档.txt 决策记录）：
-1. codeGenType = 阶段 + 策略：BASE=构思期，HTML/MULTI_FILE/VUE_PROJECT=生成期（无 DB 迁移）
+1. codeGenType = 阶段 + 策略：BASE=构思期，HTML/MULTI_FILE/VUE_PROJECT=生成期（无 DB 迁移）。
+   双层视角（开发文档.txt 决策记录第 16 条）："阶段"是用户体感/产品语义；实现上
+   BASE 是四种等价模式之一，与 HTML 等平级、同一主流程分流处理，特殊仅在产出
+   构思文档而非代码——勿将 BASE 理解为需要专门状态机机制的特殊阶段
 2. 双通道：前端"工作流开关"决定走 图编排（同步阻塞，不做 SSE 流式）/
    直连流式（现有 AiService 链路，rag/think 以 @Tool 工具形式被 AI 调用）；
    由此消除原方案最大难题"工作流节点内实时流式透传"
@@ -42,12 +49,16 @@
    └── 状态单向；回构思需重置（暂不做）
 ```
 
+说明：上图为用户体感（产品视角）。实现视角：BASE 与 HTML/MULTI_FILE/VUE_PROJECT
+为四种等价模式、统一主流程分流，代码中无任何"期"的基础设施——阶段感由
+codeGenType 值 + 成功后落库时机 + 前端按钮显隐涌现（开发文档.txt 决策记录第 16 条）。
+
 ## 1.2 通道矩阵（目标）
 
 | 请求场景 | 工作流开关 = 开 | 工作流开关 = 关（直连） |
 |---|---|---|
-| BASE 期构思对话 | base 工作流（rag 节点 → think 节点），同步阻塞返回 | 流式输出 + AI 自主调用 ragSearch / writeThink / readThink 工具 |
-| 点击"生成代码" | 生成图（AI 路由 → rag → 读 think → 生成 → 质检重试 → 构建），同步阻塞返回 | 用户手选 CodeType → update → 现有生成分支（rag/think 工具可用） |
+| BASE 期构思对话 | base 工作流（rag 占位 → think 节点），同步阻塞返回【B6 已编码待联调】 | 流式输出 + AI 自主调用 writeThink / readThink 工具【已实现（B4）】 |
+| 点击"生成代码" | 生成图（AI 路由 → rag → 读 think → 生成 → 质检重试 → 构建），同步阻塞返回【B7；rag 插槽已预埋】 | 用户手选 CodeType → update → 现有生成分支【已实现（B5）】 |
 | 生成后改码对话 | 始终直连流式（现有行为，不进图） | 同左 |
 
 两通道共同产物链：writeThink 全量覆盖写 think_{appId}.md（工具内同步渲染
@@ -93,6 +104,16 @@ index.html）→ tmp/code_output/base_{appId}/ 目录 → 前端预览浏览器�
   → StreamHandlerExecutor（AI 响应落库）→ 前端 done 事件
 ```
 
+SSE 消息协议（VUE_PROJECT / BASE，2026-09-18 补）：TokenStream 三回调各转一种
+JSON 消息（ai/model/message 包，type 字段判别）——onPartialResponse → ai_response
+（文本片段）；onPartialToolExecutionRequest → tool_request（id/name/arguments）；
+onToolExecuted → tool_executed（id/name/arguments/result）→
+JsonMessageStreamHandler 按 type 分发：AI 文本拼接透传；工具请求按 toolId 去重后
+经 BaseTool.generateToolRequestResponse 格式化；工具结果经
+generateToolExecutedResult 格式化并揉入 AI 消息落库 → Controller 包装
+{"d": chunk} → 前端 EventSource 消费。HTML / MULTI_FILE 无此层：Flux 纯文本
+直出，SimpleTextStreamHandler 只做聚合落库。
+
 ## 2.3 对话记忆（双轨）
 
 写：消息 → DB chat_history（全量）+ ChatMemory（Redis，窗口20）
@@ -113,7 +134,31 @@ index.html）→ tmp/code_output/base_{appId}/ 目录 → 前端预览浏览器�
 image_collector → prompt_enhancer → router → code_generator(appId=0L, blockLast)
   → code_quality_check → 条件边（fail 重试 / build / skip）→ project_builder
 ```
-仅 step 级事件；无记忆、未接主业务。目标方案将其转正为工作流通道的两张图。
+仅 step 级事件；无记忆、未接主业务。目标方案将其转正为工作流通道的两张图
+（2026-09-19：router 后已预埋 rag 占位插槽，转正归 B7）。
+
+## 2.6 构思工作流通道（B6，2026-09-19 编码完成，联调验收待做）
+
+```
+用户消息（开关=开且 BASE 期，含预览页点选元素转文字）
+  → POST /app/chat/think/workflow {appId, message}
+  → AppServiceImpl.thinkWorkflow：参数校验 → 仅创建者鉴权 → codeGenType
+    空值兜底 BASE / 非 BASE 拒绝 → 先落用户消息（时序硬约束：记忆回灌的
+    limit(1, maxCount) 靠"跳过最新一条"排除本轮消息，决策记录第 20 条）
+  → BaseWorkflowExecutor（@Component，虚拟线程 + Future.get(10min) 超时）
+  → BaseWorkflow：START → rag（RagNode 占位透传）→ think → END
+      ThinkNode：readThink 取现状拼增强提示词（与 B5 格式逐字一致）→
+      BaseThinkWorkflowService（无工具、同步 String；记忆 = 每次新建窗口20 +
+      DB 回灌，方案 A，跨通道共享 DB 真相）→ THINK_START/END 标记截取 →
+      命中则 saveThink（md + index.html 成对重渲染），未命中视为无更新 →
+      thinkReply 回填 context
+  → AI 回复落库（全文，与前端展示一致）→ 同步返回 thinkReply
+  → 前端 sendMessageByWorkflow 回填消息 + previewKey++ 强制重建预览 iframe
+    （构思期预览地址前后相同，Vue 不重载相同 src）
+```
+
+双图定稿（决策记录第 18 条）：构思图与生成图独立，共用 WorkflowContext /
+Executor 骨架 / 节点编写模式。
 
 ======================================================================
 # 三、【目标】流程详述
@@ -132,7 +177,7 @@ image_collector → prompt_enhancer → router → code_generator(appId=0L, bloc
   → AI 响应落库（StreamHandlerExecutor 复用）
 ```
 
-## 3.2 BASE 期 · 工作流通道（同步阻塞）
+## 3.2 BASE 期 · 工作流通道（同步阻塞）【已实现 2026-09-19（B6），实录见 2.6；联调验收待做】
 
 ```
 用户消息 → base 工作流：
@@ -200,26 +245,42 @@ think 页（md 渲染视图）──用户点选──> getElementInfo 采集
 
 | 环节 | 【现有】 | 【目标】 |
 |---|---|---|
-| codeGenType 语义 | 生成策略（创建时路由，实际未落库） | 阶段+策略：BASE=构思期 |
-| BASE 分支 | 半死代码 | 双通道：直连流式+工具 / base 工作流同步 |
-| 工作流 | 演示链路（appId=0、无记忆） | 转正为工作流通道（appId/记忆打通、同步阻塞） |
-| 流式输出 | 仅直连链路有 | 直连通道全部承接；工作流通道不流式 |
-| RAG | 无 | 双形态：RagTool + RagNode，共享 RagService |
-| think 文件 | 无 | 双形态：WriteThinkTool/ReadThinkTool + ThinkNode；工具内渲染 HTML |
-| 可视化编辑 | 仅生成期（点选元素改代码） | 生成期不变；BASE 期点选元素改 md（机制复用） |
-| 生成触发 | 不存在 | 双通道接口（用户选型直连 / AI 路由工作流） |
-| 改码对话 | 现有多轮生成 | 不变（恒直连） |
+| codeGenType 语义 | 阶段+策略已落地：BASE=构思期、成功后落库锁定（B5） | —（已实现） |
+| BASE 分支 | 直连通道已闭环（B4/B5 验收通过）；工作流通道已编码（B6，待联调） | B6 联调验收 |
+| 工作流 | 演示链路（appId=0、无记忆）+ B6 构思图已建（rag 占位→think，同步阻塞执行器就绪） | 生成图转正（appId/记忆打通、路由落库，B7） |
+| 流式输出 | 直连通道全部承接（B4） | —（已实现） |
+| RAG | 两张图均预留占位插槽（RagNode，2026-09-19） | B1/B2 恢复后补检索（搁置中，决策记录第 9 条） |
+| think 文件 | 双形态已实现：WriteThinkTool/ReadThinkTool（B3/B4）+ ThinkNode（B6，不经工具类） | —（已实现） |
+| 可视化编辑 | 生成期已实现（点选元素改代码） | BASE 期放开编辑入口（F5，机制复用零改造） |
+| 生成触发 | 直连已实现（B5：codeGenType 参数 + 成功后落库） | 工作流通道触发（B7，交互延后决策） |
+| 改码对话 | 现有多轮生成（恒直连） | 不变 |
 
 ======================================================================
-# 五、关键数据实体（目标新增）
+# 五、关键数据实体
 ======================================================================
 
-- think_{appId}.md：AI 经 writeThink 全量覆盖写（会话 id = appId，已确认）；
-  存于 tmp/code_output/base_{appId}/think_{appId}.md；readThink 读全文
-  （记忆窗口淘汰兜底 + 点选纠正时取现状）
+## 5.1 既有数据模型（2026-09-18 补 · 状态机与数据流的物理真相）
+
+- App.codeGenType（varchar）：阶段状态机的唯一物理载体——无状态表、无状态框架，
+  单字段 + 成功后落库时机 + 前端按钮显隐涌现阶段感（决策记录第 16 条的数据层
+  印证）；BASE 枚举值已存在，无需迁移
+- ChatHistory（chat_history 表）：无模式差别的统一对话账本——无 codeGenType 列，
+  构思/生成/改码对话同表流水，仅 user/ai 两类消息，appId 串联全流程；
+  工厂回灌记忆按 appId 取最近 N 条（模式无关，等价模式的又一印证）；
+  工具调用事件无独立记录类型——经 BaseTool.generateToolExecutedResult 格式化
+  为文本揉进 AI 消息落库
+- 数据模型双体系：org.aistart.model（业务：entity/dto/vo/enums，面向 DB 与前端）
+  与 org.aistart.ai.model（AI：message SSE 消息协议 + CodeResult 结构化输出 POJO，
+  面向 LangChain4j 与流处理）互不依赖——BASE 以等价模式接入时业务模型层
+  零改动的原因
+
+## 5.2 新增实体（think 相关已实现 B3/B6；RAG 搁置中）
+
+- think_{appId}.md：AI 经 writeThink（直连）/ ThinkNode 标记截取（工作流）全量
+  覆盖写（会话 id = appId）；存于 tmp/code_output/base_{appId}/think_{appId}.md；
+  readThink 读全文（记忆窗口淘汰兜底 + 点选纠正时取现状 + ThinkNode 每轮注入）
 - think 渲染 HTML：后端渲染产物，同目录，命名 index.html（复用目录默认页逻辑）；
   模板 src/main/resources/template/think-template.html（定稿见 开发文档.txt B3）
 - RAG 向量库：语料/ 导入（约160个md）；embedding 选型随 RAG 搁置
   （倾向 DashScope + InMemory，见 开发文档.txt 决策记录第 9 条）
-- App.codeGenType：新增 BASE 期语义（枚举值已存在，无需迁移）
-- 前端"工作流开关"按钮（F1 已实现）+ "生成代码"按钮（F2 待实现）
+- 前端"工作流开关"按钮（F1 已实现）+ "生成代码"按钮（F2 已实现，B5 联调通过）

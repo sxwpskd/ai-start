@@ -36,9 +36,23 @@ public interface AppService extends IService<App> {
 /**
  * 通过对话生成项目
  *
- *
+ * @param appId        应用 id
+ * @param message      用户消息
+ * @param codeGenType  可选：生成触发时指定的目标模式（html/multi_file/vue_project）；
+ *                     为空则按应用当前模式走普通对话
+ * @param loginUser    登录用户
  * */
-    Flux<String> chatToGenCode(Long appId, String message, User loginUser);
+    Flux<String> chatToGenCode(Long appId, String message, String codeGenType, User loginUser);
+
+    /**
+     * 构思期（BASE）工作流对话（工作流通道 · 同步阻塞，非流式）
+     *
+     * @param appId     应用 id
+     * @param message   用户消息
+     * @param loginUser 登录用户
+     * @return 本轮 AI 回复全文
+     * */
+    String thinkWorkflow(Long appId, String message, User loginUser);
 
     /**
      * 应用部署

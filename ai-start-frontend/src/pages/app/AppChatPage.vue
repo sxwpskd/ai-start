@@ -204,6 +204,7 @@
           </div>
           <iframe
             v-else
+            :key="previewKey"
             :src="previewUrl"
             class="preview-iframe"
             frameborder="0"
@@ -315,6 +316,9 @@ const historyLoaded = ref(false)
 // 预览相关
 const previewUrl = ref('')
 const previewReady = ref(false)
+// iframe 的 :key——构思期预览地址前后不变（同为 base_{appId}/），
+// 地址不变时 Vue 不会重新加载 iframe，靠改变 key 强制重建
+const previewKey = ref(0)
 
 // 部署相关
 const deploying = ref(false)
@@ -456,8 +460,15 @@ const fetchAppInfo = async () => {
 
 // 发送初始消息
 const sendInitialMessage = async (prompt: string) => {
-  // F1：工作流开关=开 → 新通道占位（B6/B7 后接入）
+  // F1：工作流开关=开 → 工作流通道（B6：构思期走构思工作流；生成期仍占位，B7 接管）
   if (workflowStore.workflowEnabled) {
+    // 原占位逻辑（构思期已接入真实调用，生成期待 B7）
+    // message.info('工作流待转正')
+    // return
+    if (workflowStore.appMode === 'BASE') {
+      await sendMessageByWorkflow(prompt)
+      return
+    }
     message.info('工作流待转正')
     return
   }
@@ -490,12 +501,7 @@ const sendMessage = async () => {
     return
   }
 
-  // F1：工作流开关=开 → 新通道占位（B6/B7 后接入）
-  if (workflowStore.workflowEnabled) {
-    message.info('工作流待转正')
-    return
-  }
-
+  // 组装发送内容（含点选元素信息）——直连通道与工作流通道共用
   let sendContent = userInput.value.trim()
   // 如果有选中的元素，将元素信息添加到提示词中
   if (selectedElementInfo.value) {
@@ -509,6 +515,28 @@ const sendMessage = async () => {
     }
     sendContent += elementContext
   }
+
+  // F1：工作流开关=开 → 工作流通道（B6：构思期走构思工作流；生成期仍占位，B7 接管）
+  if (workflowStore.workflowEnabled) {
+    // 原占位逻辑（构思期已接入真实调用，生成期待 B7）
+    // message.info('工作流待转正')
+    // return
+    if (workflowStore.appMode === 'BASE') {
+      userInput.value = ''
+      // 发送消息后，清除选中元素并退出编辑模式
+      if (selectedElementInfo.value) {
+        clearSelectedElement()
+        if (isEditMode.value) {
+          toggleEditMode()
+        }
+      }
+      await sendMessageByWorkflow(sendContent)
+      return
+    }
+    message.info('工作流待转正')
+    return
+  }
+
   userInput.value = ''
   // 添加用户消息（包含元素信息）
   messages.value.push({
@@ -655,6 +683,63 @@ const generateCode = async (
   }
 }
 
+// 工作流通道（构思期 · 同步阻塞）：推送消息 → 调用构思工作流 → 回填回复 → 刷新预览
+const sendMessageByWorkflow = async (content: string) => {
+  // 添加用户消息
+  messages.value.push({
+    type: 'user',
+    content,
+  })
+
+  // 添加AI消息占位符
+  const aiMessageIndex = messages.value.length
+  messages.value.push({
+    type: 'ai',
+    content: '',
+    loading: true,
+  })
+
+  await nextTick()
+  scrollToBottom()
+
+  workflowStore.generating = true
+  try {
+    const res = await request<API.BaseResponseString>('/app/chat/think/workflow', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      data: {
+        appId: appId.value,
+        message: content,
+      },
+    })
+    const aiMessage = messages.value[aiMessageIndex]
+    // 业务失败：与直连通道的 business-error 处理保持一致
+    if (res.data.code !== 0) {
+      const errorMessage = res.data.message || '构思工作流执行失败'
+      if (aiMessage) {
+        aiMessage.content = `❌ ${errorMessage}`
+        aiMessage.loading = false
+      }
+      message.error(errorMessage)
+      return
+    }
+    if (aiMessage) {
+      aiMessage.content = res.data.data || ''
+      aiMessage.loading = false
+    }
+    scrollToBottom()
+    // 后端已写入构思文件并重渲染 index.html；改变 key 强制重建 iframe 加载最新预览
+    updatePreview()
+    previewKey.value++
+  } catch (error) {
+    handleError(error, aiMessageIndex)
+  } finally {
+    workflowStore.generating = false
+  }
+}
+
 // 错误处理函数
 const handleError = (error: unknown, aiMessageIndex: number) => {
   console.error('生成代码失败：', error)
@@ -712,7 +797,9 @@ const startGenerateCode = async (codeGenType: CodeGenTypeEnum) => {
 // 更新预览
 const updatePreview = () => {
   if (appId.value) {
-    const codeGenType = appInfo.value?.codeGenType || CodeGenTypeEnum.HTML
+    // const codeGenType = appInfo.value?.codeGenType || CodeGenTypeEnum.HTML  // 旧：空值按 HTML 兜底
+    // 历史应用 codeGenType 为空应按 BASE（构思中）处理，与 workflow store 的 appMode 判定保持一致
+    const codeGenType = appInfo.value?.codeGenType || CodeGenTypeEnum.BASE
     const newPreviewUrl = getStaticPreviewUrl(codeGenType, appId.value)
     previewUrl.value = newPreviewUrl
     previewReady.value = true

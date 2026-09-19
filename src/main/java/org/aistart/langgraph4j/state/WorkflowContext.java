@@ -30,6 +30,21 @@ public class WorkflowContext implements Serializable {//支持序列化
     public static final String WORKFLOW_CONTEXT_KEY = "workflowContext";
 
     /**
+     * 应用 id（工作流通道的业务入参，同时作为对话记忆 id）
+     */
+    private Long appId;
+
+    /**
+     * 用户 id（工作流通道的业务入参）
+     */
+    private Long userId;
+
+    /**
+     * 应用当前的代码生成类型（BASE=构思期；工作流通道的业务入参）
+     */
+    private CodeGenTypeEnum codeGenType;
+
+    /**
      * 当前执行步骤
      */
     private String currentStep;
@@ -87,6 +102,11 @@ public class WorkflowContext implements Serializable {//支持序列化
     private List<ImageResource> illustrations;
     private List<ImageResource> diagrams;
     private List<ImageResource> logos;
+
+    /**
+     * 构思期（BASE）工作流本轮产出的 AI 回复文本
+     */
+    private String thinkReply;
 
     /**
      * 错误信息

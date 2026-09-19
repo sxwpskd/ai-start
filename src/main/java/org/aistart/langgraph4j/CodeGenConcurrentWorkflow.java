@@ -38,6 +38,8 @@ public class CodeGenConcurrentWorkflow {
                     .addNode("image_plan", ImagePlanNode.create())
                     .addNode("prompt_enhancer", PromptEnhancerNode.create())
                     .addNode("router", RouterNode.create())
+                    // RAG 检索占位节点（RAG 搁置中，B1/B2 恢复后在此补检索并并入 enhancedPrompt）
+                    .addNode("rag", RagNode.create())
                     .addNode("code_generator", CodeGeneratorNode.create())
                     .addNode("code_quality_check", CodeQualityCheckNode.create())
                     .addNode("project_builder", ProjectBuilderNode.create())
@@ -67,7 +69,9 @@ public class CodeGenConcurrentWorkflow {
                     // 继续串行流程
                     .addEdge("image_aggregator", "prompt_enhancer")
                     .addEdge("prompt_enhancer", "router")
-                    .addEdge("router", "code_generator")
+                    // 路由确定生成类型后再检索，便于按类型检索对应语料规范（流程.txt 3.4）
+                    .addEdge("router", "rag")
+                    .addEdge("rag", "code_generator")
                     .addEdge("code_generator", "code_quality_check")
 
                     // 质检条件边

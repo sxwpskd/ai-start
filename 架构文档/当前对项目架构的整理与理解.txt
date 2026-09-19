@@ -14,7 +14,7 @@
 
 ---
 
-# 一、项目架构理解（AI 助手整理于 2026-09-17，本人对该项目的长期理解基准）
+# 一、项目架构理解（AI 助手整理于 2026-09-17，2026-09-18 补录 model 双体系等事实，2026-09-19 补录 B6 构思工作流通道；本人对该项目的长期理解基准）
 
 ## 1. 项目定位
 AI 零代码应用生成平台（ai-start）：用户输入自然语言描述，由 AI Agent 自动完成素材搜集、代码生成、质量检查、项目构建，最终一键部署为可访问的 Web 应用。本仓库为纯后端服务（Spring Boot，端口 8100，context-path=/ai），前端为独立仓库。
@@ -30,28 +30,46 @@ AI 零代码应用生成平台（ai-start）：用户输入自然语言描述，
 
 ## 3. 包结构与职责（org.aistart）
 - controller：
-  - AppController：应用 CRUD、管理员接口（@AuthCheck）、SSE 聊天生码 GET /app/chat/gen/code（@RateLimit USER 5次/60s）、ZIP 下载 /app/download/{appId}、部署 /app/deploy、精选应用列表（@Cacheable 缓存，pageNum<=10 才缓存）
+  - AppController：应用 CRUD、管理员接口（@AuthCheck）、SSE 聊天生码 GET /app/chat/gen/code（@RateLimit USER 5次/60s）、构思工作流 POST /app/chat/think/workflow（B6，同步阻塞，无限流）、ZIP 下载 /app/download/{appId}、部署 /app/deploy、精选应用列表（@Cacheable 缓存，pageNum<=10 才缓存）
   - UserController / ChatHistoryController（时间游标分页查历史）/ StaticResourceController（生成站点预览）/ WorkflowSseController（LangGraph 工作流演示：同步 / Flux / SseEmitter 三种方式）
 - service：
-  - AppServiceImpl：创建应用时调 AI 智能路由选 codeGenType；chatToGenCode（校验权限→存用户消息→Facade 流式生成→StreamHandlerExecutor 收尾入库 AI 响应）；deployApp（生成 6 位 deployKey→Vue 构建出 dist→复制到部署目录→更新库→虚拟线程异步截图上传 COS）；重写 removeById 级联删除对话历史
+  - AppServiceImpl：创建应用时调 AI 智能路由选 codeGenType；chatToGenCode（校验权限→存用户消息→Facade 流式生成→StreamHandlerExecutor 收尾入库 AI 响应）；thinkWorkflow（B6 构思工作流通道：校验→鉴权→BASE 校验→先落用户消息→BaseWorkflowExecutor 同步执行→落 AI 回复全文）；deployApp（生成 6 位 deployKey→Vue 构建出 dist→复制到部署目录→更新库→虚拟线程异步截图上传 COS）；重写 removeById 级联删除对话历史
   - ChatHistoryServiceImpl：游标分页（lastCreateTime）、loadChatHistoryToMemory（DB 历史按时间正序灌入 LangChain4j MessageWindowChatMemory）
   - ScreenshotServiceImpl：Selenium 截图 + COS 上传；ProjectDownloadServiceImpl：ZIP 打包流式下载
+- model：业务数据模型三件套（entity / dto / vo + enums），与 ai/model（AI 输出模型）完全隔离、互不依赖——
+  entity/App（codeGenType 单字段承载模式状态，无状态表无状态框架，雪花 id + 逻辑删除）、
+  entity/ChatHistory（message + messageType + appId，无模式列——构思/生成/改码对话同表流水）、
+  entity/User（雪花 id 防爬 + 逻辑删除）；dto 为请求薄壳（AppAddRequest 仅 initPrompt）；vo 关联 UserVO；
+  enums：CodeGenTypeEnum（base/html/multi_file/vue_project）、ChatHistoryMessageTypeEnum
+  （仅 user/ai——无 tool 值，工具事件经 BaseTool.generateToolExecutedResult 格式化为文本
+  揉进 AI 消息落库）、UserRoleEnum（user/admin）
 - ai：
   - AiCodeGeneratorService：声明式 AI Service 接口，按类型暴露 base/html/multi（Flux 流式）与 vue（TokenStream）方法，SystemMessage 从 resources/prompt/*.txt 加载
+  - BaseThinkWorkflowService + BaseThinkWorkflowServiceFactory（B6 工作流通道构思服务）：无工具、同步 String 返回（prompt/base-workflow-prompt.txt，输出带 THINK_START/END 标记）；工厂每次调用新建记忆（窗口 20）+ DB 回灌、不做实例缓存（记忆方案 A，与直连工厂相互独立）
   - AiCodeGeneratorServiceFactory：Caffeine 缓存 (appId+codeGenType)→Service 实例（max 1000，写后30min过期）；创建时构建 MessageWindowChatMemory(Redis store, 窗口20) 并从 DB 回灌历史；VUE_PROJECT 用 prototype 多例 reasoningStreamingChatModel 解决 AI 串行调用瓶颈，并注册 ToolManager 全部工具 + hallucinatedToolNameStrategy 防工具幻觉
   - AiCodeGenTypeRoutingServiceFactory + AiCodeGenTypeRoutingService：结构化输出，让 AI 把用户需求路由为 CodeGenTypeEnum（BASE/HTML/MULTI_FILE/VUE_PROJECT）
   - guardrail：PromptSafetyInputGuardrail（输入护轨，防 Prompt 注入）、RetryOutputGuardrail（输出护轨 + 自动重试）
   - tools：BaseTool 基类 + 文件读/写/修改/删除/目录读取工具 + ToolManager（Spring 注入 BaseTool[] 自动注册全部工具）
-  - model.message：统一 JSON 消息载体（AiResponseMessage / ToolRequestMessage / ToolExecutedMessage），SSE 流中区分 AI 响应与工具调用事件，便于前端解析
+  - model：AI 输出模型（与业务 org.aistart.model 隔离），分两层——
+    message/：SSE 流 JSON 消息协议，StreamMessage 基类仅 type 字段 +
+    StreamMessageTypeEnum 三值（ai_response / tool_request / tool_executed）；
+    AiResponseMessage(data)、ToolRequestMessage(id/name/arguments)、
+    ToolExecutedMessage(id/name/arguments/result)；TokenStream 三回调
+    （onPartialResponse / onPartialToolExecutionRequest / onToolExecuted）各转一种
+    JSON 推入 sink，JsonMessageStreamHandler 按 type 反序列化分发；
+    HtmlCodeResult / MultiFileCodeResult / BaseCodeResult：@Description 结构化输出
+    POJO，配合非流式生成方法由 AI 直接填充；流式链路不走此类（聚合后由
+    CodeParserExecutor 解析）；BaseCodeResult 属旧 BASE 死链（零删除保留）
 - core：
   - AIfacade/AiCodeGeneratorFacade：门面模式统一生成入口。BASE/HTML/MULTI_FILE 走 Flux，doOnComplete 聚合完整代码→CodeParserExecutor 解析→CodeFileSaverExecutor 保存；VUE_PROJECT 走 TokenStream（AI 通过文件工具直接写项目文件），onCompleteResponse 后同步触发 VueProjectBuilder 构建
   - parser：CodeParserExecutor + 策略模式（Base/Html/MultiFile 三种解析器）
   - file_save：CodeFileSaverExecutor + 模板方法模式（三种保存模板）
   - builder/VueProjectBuilder：Process API 执行 npm install/build，超时控制（install 5min / build 3min），Windows 下自动补 .cmd 后缀
   - handler：StreamHandlerExecutor / JsonMessageStreamHandler / SimpleTextStreamHandler，负责流结束后记录 AI 响应到对话历史
-- langgraph4j（三套工作流演进）：
+- langgraph4j（工作流通道 + 三套演示工作流演进）：
+  - workflow/ 子包（B6 构思工作流通道，2026-09-19）：BaseWorkflow（START → rag 占位 → think → END）+ BaseWorkflowExecutor（@Component，静态虚拟线程池 + Future.get(10min) 超时 + 取终态 WorkflowContext）；node/ThinkNode（readThink 拼增强提示词 → 调无工具构思服务 → THINK_START/END 标记截取 → saveThink 成对重渲染；thinkReply 回填 context，不经 ai/tools）、node/RagNode（占位透传，B1/B2 恢复后补检索）
   - CodeGenWorkflow 基础版：image_collector → prompt_enhancer → router → code_generator → code_quality_check →（条件边 routeAfterQualityCheck：质检失败 fail 回 code_generator；通过且 VUE_PROJECT 走 build；其他 skip_build 结束）→ project_builder
-  - CodeGenConcurrentWorkflow 并发版：image_plan（AI 规划搜集任务）→ 4 个并发收集节点（content/illustration/diagram/logo）→ image_aggregator 汇聚 → 后续串行；RunnableConfig 配自定义并行线程池（Parallel-Image-Collect，核心10/最大20）
+  - CodeGenConcurrentWorkflow 并发版：image_plan（AI 规划搜集任务）→ 4 个并发收集节点（content/illustration/diagram/logo）→ image_aggregator 汇聚 → 后续串行（2026-09-19 已在 router 后预埋 rag 占位：router → rag → code_generator）；RunnableConfig 配自定义并行线程池（Parallel-Image-Collect，核心10/最大20）
   - CodeGenSubgraphWorkflow 子图版：4 类收集改为子图节点（与父图共享状态）并发执行
   - state/WorkflowContext：可序列化的全流程上下文，存于 MessagesState 的 "workflowContext" key
   - node：RouterNode、PromptEnhancerNode、CodeGeneratorNode（质检失败时用错误列表构造修复提示词重试）、CodeQualityCheckNode、ProjectBuilderNode；node/concurrent：ImagePlanNode、4 个收集节点、ImageAggregatorNode
@@ -67,7 +85,8 @@ AI 零代码应用生成平台（ai-start）：用户输入自然语言描述，
 1. 创建应用（POST /app/add）：AI 路由服务（结构化输出 + routing-prompt）根据 initPrompt 选择 codeGenType → 入库（appName 取前 12 字符）
 2. 对话生成代码（GET /app/chat/gen/code，SSE）：登录校验 + 限流 → 存用户消息 → Facade → 工厂取（或建）AiCodeGeneratorService（Caffeine 缓存 + Redis 记忆 + DB 历史回灌）→ 流式输出给前端；流结束由 StreamHandlerExecutor 落库 AI 响应
 3. 部署（POST /app/deploy）：校验权限 → 生成 6 位 deployKey → Vue 项目构建 dist → 复制到 {CODE_DEPLOY_ROOT_DIR}/{deployKey} → 更新 deployKey/deployedTime → 返回 URL → 虚拟线程异步截图 + COS 上传 + 更新封面
-4. LangGraph 工作流（/workflow/*）：目前为独立演示链路，尚未与主业务（appId 维度）打通（CodeGeneratorNode 内 appId 暂为 0L，有 TODO 注释）
+4. LangGraph 工作流（/workflow/*）：目前为独立演示链路，尚未与主业务（appId 维度）打通（CodeGeneratorNode 内 appId 暂为 0L，有 TODO 注释；2026-09-19 已在 router 后预埋 rag 占位插槽）
+5. 构思工作流（POST /app/chat/think/workflow，B6 2026-09-19）：开关=开且 BASE 期 → thinkWorkflow 校验落库 → BaseWorkflowExecutor（虚拟线程+10min 超时）→ BaseWorkflow（rag 占位 → ThinkNode：readThink 注入 → 无工具 AI → THINK_START/END 标记截取 → saveThink 成对重渲染）→ 同步返回 thinkReply 并落库（编码完成，联调验收待做）
 
 ## 5. 关键约定速记
 - 目录约定：生成目录 {user.dir}/tmp/code_output/{codeGenType}_{appId}；部署目录 {user.dir}/tmp/code_deploy/{deployKey}

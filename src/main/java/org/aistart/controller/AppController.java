@@ -65,15 +65,18 @@ public class  AppController {
     /**
      * 应用聊天生成代码（流式 SSE）
      *
-     * @param appId   应用 ID
-     * @param message 用户消息
-     * @param request 请求对象
+     * @param appId       应用 ID
+     * @param message     用户消息
+     * @param codeGenType 可选：生成触发时指定的目标模式（html/multi_file/vue_project），
+     *                    为空则为普通对话（构思期构思对话 / 生成期改码对话）
+     * @param request     请求对象
      * @return 生成结果流
      */
     @GetMapping(value = "/chat/gen/code", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 60, message = "AI 对话请求过于频繁，请稍后再试")
     public Flux<ServerSentEvent<String>> chatToGenCode(@RequestParam Long appId,
                                                        @RequestParam String message,
+                                                       @RequestParam(required = false) String codeGenType,
                                                        HttpServletRequest request) {
         // 参数校验
         ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用ID无效");
@@ -81,7 +84,7 @@ public class  AppController {
         // 获取当前登录用户
         User loginUser = userService.getLoginUser(request);
         // 调用服务生成代码（流式）
-        Flux<String> contentFlux = appService.chatToGenCode(appId, message, loginUser);
+        Flux<String> contentFlux = appService.chatToGenCode(appId, message, codeGenType, loginUser);
         // 转换为 ServerSentEvent 格式
         return contentFlux
                 .map(chunk -> {
@@ -99,6 +102,25 @@ public class  AppController {
                                 .data("")
                                 .build()
                 ));
+    }
+
+    /**
+     * 构思期（BASE）工作流对话（工作流通道 · 同步阻塞，非流式）
+     *
+     * @param thinkWorkflowRequest 构思工作流请求（appId + message）
+     * @param request              请求对象
+     * @return 本轮 AI 回复全文
+     */
+    @PostMapping("/chat/think/workflow")
+    public BaseResponse<String> thinkWorkflow(@RequestBody AppThinkWorkflowRequest thinkWorkflowRequest,
+                                              HttpServletRequest request) {
+        ThrowUtils.throwIf(thinkWorkflowRequest == null, ErrorCode.PARAMS_ERROR);
+        // 获取当前登录用户
+        User loginUser = userService.getLoginUser(request);
+        // 同步阻塞执行构思工作流
+        String reply = appService.thinkWorkflow(thinkWorkflowRequest.getAppId(),
+                thinkWorkflowRequest.getMessage(), loginUser);
+        return ResultUtils.success(reply);
     }
 
     /**

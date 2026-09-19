@@ -1,7 +1,16 @@
 # 开发文档（执行+验收层 · 任务拆解 / 决策记录 / 实施顺序）
 
-更新时间：2026-09-18（B4 编码完成：任务条目逐条标记已完成，编译通过；
-同日此前完成 B4 范围核实定稿 + 决策记录第 15 条零删除原则、文档体系重构与 B3 全部任务）
+更新时间：2026-09-19（第二批次）B6 编码完成（后端 + 前端最小接线），编译与
+type-check 通过、联调验收待做；B6 任务条目按实际实现标注；新增决策记录第
+18/19/20 条（双图定稿与 rag 插槽 / 工作流 AI 服务与记忆方案 / 端点与落库）；
+B7 预埋 rag 插槽并预记"生成图读 think"设计
+（第一批次 2026-09-19：B4/B5 手动联调验收通过，BASE 直连通道闭环；决策记录
+第 17 条首页创建时显式选型直接落库；记录前端 AppChatPage.vue 既有类型错误
+致 npm run build 必失败，拍板延后处理）
+（前次 2026-09-18：B5 编码完成，任务条目按实际实现标注，编译通过；同日此前
+B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知定稿：阶段是用户
+体感、等价模式是实现；更早完成 B4 范围核实定稿 + 决策记录第 15 条零删除
+原则、文档体系重构与 B3 全部任务）
 依据：流程.txt（双通道方案与状态机）+ 当前目标.txt（阶段目标与现状差距）
 标注：【新增】= 新建文件；【改动】= 修改现有文件。前端任务在独立仓库。
 包根：src/main/java/org/aistart
@@ -108,27 +117,76 @@
   验收：DB 手动置 codeGenType='base' 的应用——聊天流式返回、AI 调
   writeThink/readThink 工具、/static/base_{appId}/ 预览可刷新、AI 回复含工具事件
   正确落库；"新应用默认 BASE"依赖 B5 的 createApp 改动，不在 B4 边界内
-- 状态：编码与编译验证已完成（mvnw compile 通过）；上述验收项待手动联调确认
+- 状态：验收通过（2026-09-19 用户手动联调确认，构思期对话流式返回、工具调用、
+  预览刷新正常）
 
-### B5：生成触发 · 直连通道
--【改动】AppController.chatToGenCode + AppServiceImpl：扩展现有接口（不新增端点）——
-  新增可选参数 codeGenType（html/multi_file/vue_project）；
-  参数存在且应用处于构思期 → 生成分支（读 think 拼接增强提示词 → 复用现有生成分支）；
-  codeGenType 于生成【成功后】落库——失败留构思期可重选，成功即单向锁定；
-  落库行为与现有聊天一致：用户消息（固定文案）生成前落库、AI 回复流完成后落库
--【改动】AppServiceImpl.createApp：codeGenType 默认置 BASE；删除未生效的创建时路由调用
+### B5：生成触发 · 直连通道（2026-09-18 编码完成，编译通过；
+    实施细节按实际实现逐条标注）
+-【改动 · 已完成 2026-09-18】AppService（接口）+ AppController.chatToGenCode：
+  扩展现有接口（不新增端点）——新增可选参数 codeGenType（html/multi_file/vue_project），
+  Controller 以 @RequestParam(required = false) 接收并透传（前端 EventSource 零新增请求）
+-【改动 · 已完成 2026-09-18】AppServiceImpl.chatToGenCode：生成触发分支——
+  ① 参数校验：参数非空时必须是三个生成模式之一，传 base / 非法值均抛 PARAMS_ERROR
+     （不吞脏数据）；仅当前处于 BASE（含空值兜底）时生效，已在生成期则忽略参数
+     按现有类型走（防御：前端按钮成功后已隐藏，正常流程到不了此处）
+  ② 读构思拼增强提示词：message + "\n\n以下是当前的应用构思文档：\n" +
+     ThinkFileUtils.readThink(appId)；think 文件不存在时 readThink 返回提示文本，
+     照拼（AI 自行发挥）；落库的用户消息仍为原始文案——构思全文不重复进聊天记录
+  ③ 复用现有生成分支：实际模式 = 目标模式，其后工厂/Facade/Handler 零改动
+     （等价模式红利，决策记录第 16 条）
+  ④ 成功后落库：返回流外层 doOnComplete → updateById 置目标 codeGenType
+     （单向锁定，阶段体感锚点）；落库失败仅记 error 日志不抛异常（流已完成，
+     异常无法回传前端，也避免 Reactor onErrorDropped 噪音）
+-【改动 · 已完成 2026-09-18】AppServiceImpl.createApp：codeGenType 默认置 BASE
+  （新应用正式入口）；原条目"删除未生效的创建时路由调用"改为两行注释保留——
+  依零删除原则（决策记录第 15 条），字段 aiCodeGenTypeRoutingServiceFactory
+  及相关 import 一并保留
 - 依赖 B3；验收：点击"生成代码"后 codeGenType 更新，生成内容包含构思上下文
+- 状态：验收通过（2026-09-19 用户手动联调确认：html_458578269997981696 生成
+  产物含构思上下文，readThink 增强提示词注入生效，回答正常）。
+  联调发现并经用户确认接受：local streaming-chat-model max-tokens=4090，长页面
+  输出截断致 HTML 代码块未闭合时解析器按既有兜底整段写入——长度限制所致，
+  非功能缺陷
 
-### B6：base 工作流（工作流通道 · 构思）
--【搁置后补】langgraph4j/node/RagNode（包装 RagService，检索结果注入上下文）
--【新增】langgraph4j/node/ThinkNode（构思生成 + 调 ThinkFileUtils.saveThink 写文件渲染，
-  不经工具类，避免节点反向依赖 ai/tools）
--【新增】langgraph4j/workflow/BaseWorkflow：START → think → END（rag 节点留插槽）
--【新增】BaseWorkflowExecutor：虚拟线程 + 同步阻塞执行，返回执行结果
--【改动】langgraph4j/WorkflowContext：新增 appId / userId / codeGenType 字段
+### B6：base 工作流（工作流通道 · 构思）（2026-09-19 编码完成，编译/type-check
+    通过；联调验收待做；结构定稿见决策记录第 18/19/20 条）
+-【新增 · 已完成 2026-09-19】langgraph4j/node/RagNode：占位节点（零逻辑透传，
+  仅记录 currentStep）——原计划"搁置后补"，实际先建插槽：构思图与生成图都已
+  挂上，B1/B2 恢复后只填检索逻辑不改图
+-【新增 · 已完成 2026-09-19】langgraph4j/node/ThinkNode：①readThink(appId) 取
+  现状拼增强提示词（拼接格式与 B5 逐字一致）→ ②调 BaseThinkWorkflowService
+  （无工具、同步）→ ③THINK_START/END 标记截取，命中则 ThinkFileUtils.saveThink
+  （不经工具类，决策记录第 11 条），未命中视为本轮构思无更新不写文件 →
+  ④thinkReply 回填 context
+-【新增 · 已完成 2026-09-19】langgraph4j/workflow/BaseWorkflow（新建 workflow
+  子包）：START → rag（占位）→ think → END
+-【新增 · 已完成 2026-09-19】BaseWorkflowExecutor：@Component 注入；静态虚拟
+  线程池（newVirtualThreadPerTaskExecutor；不用 try-with-resources——close()
+  会阻塞等待任务结束，超时后反而卡死）+ Future.get(10min) 超时 + cancel(true) +
+  BusinessException 原样上抛；B7 的 GenWorkflowExecutor 直接照抄骨架
+-【改动 · 已完成 2026-09-19】WorkflowContext：新增 appId / userId / codeGenType /
+  thinkReply 四字段（thinkReply 承载本轮 AI 回复，接口层取用）
+-【配套新增 · 已完成 2026-09-19，原任务条目未列】
+  ① prompt/base-workflow-prompt.txt：工作流版提示词——base-prompt.txt 通篇工具
+  指令不能直接用于无工具环境（详见决策记录第 19 条）
+  ② ai/BaseThinkWorkflowService（接口）+ BaseThinkWorkflowServiceFactory（工厂）：
+  无工具 AiService + 记忆方案 A
+-【接口层 · 已完成 2026-09-19】AppService/AppServiceImpl.thinkWorkflow（8 步：
+  参数校验 → 仅创建者鉴权 → codeGenType 空值兜底 BASE + 非 BASE 拒绝 → 先落
+  用户消息 → 同步执行 → 落 AI 回复全文 → 返回）+ AppController
+  POST /app/chat/think/workflow + AppThinkWorkflowRequest DTO
+-【前端 · 已完成 2026-09-19】AppChatPage.vue 最小接线：sendMessageByWorkflow +
+  双入口分支（开关=开 && BASE 走工作流；生成期仍 toast 占位，B7 接管）+
+  previewKey 强制重建 iframe（构思期预览地址前后相同 base_{appId}/，Vue 不重载
+  相同 src）——F4 全套仍留 B7 后统一打磨
 - 依赖 B3；验收：开关=开时构思请求跑工作流，同步返回 + 预览刷新
+- 状态：编码完成；联调验收未做（需后端启动 + DB 应用为 base + Redis 就绪）
 
 ### B7：生成图转正（工作流通道 · 生成）
+-【改动 · 已完成 2026-09-19（B6 期间预埋）】CodeGenConcurrentWorkflow：router 后
+  插入 rag 占位节点（router → rag → code_generator，与流程.txt 3.4 蓝图一致）；
+  该类现仅测试引用、零业务风险；B1/B2 恢复后 rag 节点须自行把检索结果并入
+  enhancedPrompt（prompt_enhancer 在 router 之前已执行完，不能指望它再合并）
 -【改动】CodeGenConcurrentWorkflow（并发版转正）：入口接业务侧，appId/记忆打通
 -【改动】CodeGeneratorNode：appId 改从 context 读取（去掉硬编码 0L；blockLast 保留，
   与同步阻塞模式一致）
@@ -136,6 +194,11 @@
 -【新增】GenWorkflowExecutor：同步阻塞执行 + 超时控制
   （超时方案已定，见第四节决策记录第 8 条：Nginx 600s + 前端 10min + 生成中防重）
 -【改动】AppController：工作流通道的生成触发端点
+-【设计预记 2026-09-19（用户拍板归 B7）】生成图开始时读 think 文件入 context：
+  用独立字段（如 thinkContext），不得并入 originalPrompt——RouterNode 拿
+  originalPrompt 做 AI 路由，拼入约 800 字构思会污染路由提示词；think 文件不存在
+  时置空不拼（决策记录第 17 条的直创生成期应用无构思文档，"尚未创建"提示文本
+  只适用于构思图场景）；前置条件 = appId 打通（CodeGeneratorNode 现硬编码 0L）
 - 依赖 B6（WorkflowContext 字段）；验收：开关=开 + 点生成：全图跑完一次性返回，
   质检 fail 可重试，产物正确落盘
 
@@ -177,11 +240,15 @@
 ### F3 构思界面（直连 · 默认态）
 - 聊天组件与接口全复用现有（后端按 codeGenType=BASE 分流到构思分支，前端零请求改动）
 - 识别 writeThink 工具执行事件（复用现有工具 SSE 事件）→ 刷新预览 iframe
+  【缺口未实现：AppChatPage 现不解析工具 SSE 事件；previewKey 已就位（B6），
+  将来在 SSE 处理中加 previewKey++ 即可】
 - 顶部「构思中」徽章
 
 ### F4 工作流等待交互（B6/B7 后）
 - 同步阻塞请求：全屏 loading + 阶段文案 + 10min 超时 + 失败重试
-- 当前阶段：toast「工作流待转正」占位（F1 开关即可先行交付）
+- 状态：BASE 期最小接线已实现（2026-09-19：sendMessageByWorkflow 同步调用 +
+  generating 状态 + previewKey 刷新；请求超时暂依赖 axios 默认，未单独配 10min）；
+  生成期仍 toast 占位（B7 接管）；F4 全套留 B7 后统一打磨
 
 ### F5 预览切换（2026-09-18 规格翻转：think 页由只读 → 可点选）
 - iframe src 由 appMode 驱动：BASE → think 渲染页静态地址；生成模式 → 现有预览
@@ -200,7 +267,21 @@
 
 ### 延后决策
 - 工作流模式的生成触发交互（B7 时定：大概率按钮+确认，无 CodeType 选择，
-  RouterNode 自动路由）
+  RouterNode 自动路由）。用户提议口令式判据（消息含"我已明确我的需求，现在
+  生成代码"才进生成图）——方向可行（与直连 F2 固定文案同风格），但建议
+  端点/意图参数为主、文案为辅（纯文案判据易被误触发，且生成图是数分钟级
+  含 npm 构建的昂贵操作；另需与直连文案「请根据以上构思，生成代码」统一或
+  明确区分）；随 B7 交互定稿
+
+### 已知问题（2026-09-19 记录，拍板延后处理）
+- AppChatPage.vue 6 处既有类型错误（TS2532：messages.value[aiMessageIndex]
+  下标访问未判空；B6 前端改动后行号移至 615/616/650/651/746/747，数量与成因
+  不变，B6 新增代码已用判空守卫、零新增错误）：npm run build 的 type-check
+  （vue-tsc --build）必失败——build = run-p type-check + build-only，任一
+  子进程退出码非 0 整体失败（已实测退出码 2）；dev 模式 Vite/esbuild 只剥
+  类型不检查，故日常开发不可见。git diff 核实为历史遗留，与 BASE 改造无关。
+  修法已备（判空守卫或封装 updateMessage 函数，不改运行时行为）——
+  部署上线前必须先修，日常暂延后
 
 ======================================================================
 ## 三、依赖与实施顺序（2026-09-17 定序：前端先行 → 直连 → 工作流）
@@ -213,7 +294,11 @@
 阶段二 · 直连通道：B3 → B4 → B5 → F3 联调
   （注意：createApp 默认 BASE 在 B5 落地，届时聊天依赖 B4 的 BASE 分支——
    B4 必须先于/同批于 B5 的默认值变更，勿倒序）
+  【进度 2026-09-19】B3 / B4 / B5 编码、编译及手动联调验收全部通过
+   （用户确认 BASE 直连通道闭环）；阶段二完成
 阶段三 · 工作流：B6 → B7 → F4/F5 收尾
+  【进度 2026-09-19】B6 编码完成（后端 9 文件 + 前端 1 文件），编译/type-check
+   通过；联调验收待做。B7 预埋：生成图 rag 插槽已插入（router 后）
 【搁置恢复后】B1 → B2 → RagNode 补挂（B4 工具列表 / B6 图插槽）
 
 ======================================================================
@@ -385,3 +470,100 @@
      generateBaseCodeStream（生成基础代码流）名实不符；方法语义即"构思期流式对话"
    - 模型选型：BASE 用 streamingChatModelPrototype（deepseek-chat 流式）而非
      VUE 的 reasoning 模型（deepseek-reasoner）——构思对话无复杂代码生成推理需求
+
+16.【BASE 模式认知定稿：阶段是用户体感，等价模式是实现】（2026-09-18 确认，
+    补齐第 1 条的实现视角；缘起：AI 助手曾据"阶段"叙事误判 BASE 需专门的
+    状态机机制，立此条防止再犯）
+   - 双层视角，同一系统：产品层（用户体感）="阶段"——构思期/生成期，先构思
+     再生成，分阶段使产出更符合需求；实现层（工程现实）="四种等价模式"——
+     BASE 与 HTML/MULTI_FILE/VUE_PROJECT 平级，同一主流程处理
+     （chatToGenCode → 工厂按 codeGenType 建 AiService → Facade switch 分流 →
+     流式返回），BASE 的特殊仅在产出物（构思文档而非代码）
+   - 阶段体感不需要任何状态机基础设施支撑，由轻量约定"涌现"：codeGenType
+     的值 + 成功后落库的时机 + 前端按钮显隐；代码中不存在任何"期"的概念，
+     只有模式分流（Facade/工厂/StreamHandlerExecutor 的 switch 中 BASE 与
+     HTML 是平级 case）
+   - 两层各司其职：文档"阶段"叙事指导产品决策（单向锁定/失败可重选/构思
+     不丢/重新构思=新建应用）；代码"等价模式"结构指导工程决策（B4=补通
+     BASE case，B5=换 codeGenType 来源，未来加模式=加一个 case）
+   - 对 B5 的推论："成功后落库"是阶段体感的锚点（失败→体感仍在构思期，
+     可重选可换型；成功→进入生成期锁定），勿为实现简便改为"参数到达即落库"
+   - 本条不推翻第 1 条的产品语义结论，仅补齐实现视角，两条共同构成完整认知
+
+17.【首页创建时显式选型：允许直接落库】（2026-09-19 确认，与第 16 条划界；
+    缘起：用户要求首页同会话页具备模式选择能力——不经构思期直接生成）
+   - 前端形态：HomePage 新建输入框操作区新增 a-select 初始生成类型选择器
+     ——「先构思，再生成」（默认，=base）/原生 HTML/原生多文件/Vue 项目；
+     同区新增 F1 工作流开关（全局持久化；B6/B7 未就绪期间开启则禁用创建
+     按钮 + tooltip「工作流未就绪」，防 initPrompt 被占位逻辑拦截产出
+     空白应用）
+   - 与第 16 条的边界（不推翻第 16 条）：第 16 条禁止的是生成触发时
+     「参数到达即落库」——那是阶段跃迁锚点，必须 AI 流成功后才落库；
+     本条允许的是创建时用户显式选型直接落库——这是 codeGenType 的初始值
+     来源，创建即落库天经地义，不存在「失败留构思期」的锚点问题。
+     一句话：创建选型定初始值（立即落库），生成触发定变更值（成功后落库）
+   - 后端实现：AppAddRequest 新增可选 codeGenType；createApp 校验——
+     空值默认 BASE（历史行为不变），非空须为 base/html/multi_file/
+     vue_project 之一（base 显式传入等同默认；非法值抛 PARAMS_ERROR，
+     不吞脏数据），按实际值落库
+   - 前端实现：选非构思模式时 Modal.confirm 二次确认（文案明示创建后无法
+     更改生成模式、无法回构思期）；addApp 透传 codeGenType；创建跳转后
+     appMode=GENERATED → F2 按钮自动隐藏，initPrompt 直接走对应生成分支
+     （AppChatPage 零改动）
+   - 状态：2026-09-19 编码完成，后端 mvnw compile 通过、前端 type-check
+     HomePage 无错（AppChatPage 6 处报错为历史遗留，见前端已知问题）
+
+18.【B6 双图定稿与 rag 插槽】（2026-09-19 确认，缘起：曾评估"单图 + 入口按
+    codeGenType 分流"方案，经论证否决）
+   - 否决单图的理由：入口判据若按应用当前 codeGenType，在"生成触发"场景恒为
+     BASE（决策记录第 16 条：codeGenType 是成功后落库的锚点，点"生成代码"那一刻
+     仍处构思期），分支失效；单图还会把 B7 的交互延后决策（生成触发形态）提前
+     锁进 B6
+   - 定稿：构思图（BaseWorkflow）与生成图各自独立；共用层在上下文与执行器——
+     WorkflowContext（appId/userId/codeGenType/thinkReply）+ BaseWorkflowExecutor
+     骨架（B7 的 GenWorkflowExecutor 照抄）+ 节点编写模式（create()/node_async/
+     SpringContextUtil）
+   - rag 占位节点（RagNode，零逻辑透传）两张图都挂：构思图在图首（START → rag
+     → think → END）；生成图挂 router 之后（router → rag → code_generator）——
+     用户最初提议"所有图的首个节点"，与流程.txt 3.4 蓝图（Router 在 rag 前）冲突，
+     修正为 router 后：路由确定生成类型后可按类型检索对应语料，更精准
+
+19.【B6 工作流版提示词 / 无工具 AI 服务 / 记忆方案】（2026-09-19 确认）
+   - base-prompt.txt 不能直接用于工作流通道：通篇工具形态指令（工作职责 3/4、
+     工具调用规则 5 条、点选处理章节），无工具环境照用必错乱；另写
+     base-workflow-prompt.txt——删工具条款、输出格式硬约束 = 1~3 句说明 +
+     THINK_START/END 标记区块（HTML 注释渲染不可见，前端零处理）、"每轮消息
+     末尾附带当前构思文档"（由 ThinkNode 主动注入）
+   - 新增 BaseThinkWorkflowService（@SystemMessage 工作流提示词、@MemoryId appId、
+     同步 String 返回）+ 独立工厂 BaseThinkWorkflowServiceFactory——与
+     AiCodeGeneratorServiceFactory 相互独立（本服务不注册任何工具，配置不同，
+     共用实例缓存会相互覆盖）
+   - 记忆方案 A（三案对比后落地）：每次调用新建 MessageWindowChatMemory（窗口 20）
+     + loadChatHistoryToMemory 回灌（内部 clear + 以 DB 重建）——DB 是对话历史
+     唯一真相，直连通道落库的历史被工作流看到、反之亦然，是"切换不清空会话"
+     总规则的落地；不做实例缓存（缓存会使记忆窗口与 DB 脱节）；否决 C（复用
+     直连记忆实例）的理由：引入 langgraph4j → ai 反向耦合且收益有限；方案差异
+     全部收在工厂一个类，后续可低成本切换
+   - ThinkNode 每轮主动 readThink 拼增强提示词（与 B5 拼接格式逐字一致）——
+     记忆窗口 20 条必淘汰最初含全文的消息，工作流通道无 readThink 工具，节点
+     主动读是唯一确定性兜底（"记忆方案决定 AI 平均看到多少历史，readThink
+     注入决定 AI 永远能看到构思现状"，两者正交）
+   - 标记解析兜底：未命中 THINK_START/END 视为"本轮构思无更新"不写文件——
+     不会用残缺内容覆盖构思，天然支持纯问答轮次
+
+20.【B6 端点 / 落库 / 执行器 / 前端刷新】（2026-09-19 确认）
+   - 端点：POST /app/chat/think/workflow {appId, message}，不加限流（拍板）；
+     同步阻塞返回 AI 回复全文（BaseResponse<String>）
+   - 落库时序硬约束：先落用户消息再跑工作流——loadChatHistoryToMemory 的
+     limit(1, maxCount) 靠"跳过最新一条"排除本轮消息，顺序反了会误吞一条真实
+     历史；AI 回复在执行完成后落库
+   - AI 回复落全文（含标记与完整文档，约 800 字），与前端展示一致——否决
+     "只落说明文字"：需重复标记解析逻辑且落库内容与前端所见不一致；量小无
+     性能问题
+   - BaseWorkflowExecutor 做成 @Component 注入（与 StreamHandlerExecutor 惯例
+     一致，B7 同款）；超时 10min（与决策记录第 8 条前端 10min 体系一致）；
+     静态线程池不用 try-with-resources（ExecutorService.close() 会等待任务
+     结束，超时后反而被阻塞）
+   - 前端刷新补丁：iframe 加 :key="previewKey"——构思期预览地址前后相同
+     （base_{appId}/），Vue 不重载相同 src，靠改 key 强制重建；该 key 亦为
+     F3（直连工具事件驱动刷新）预留
