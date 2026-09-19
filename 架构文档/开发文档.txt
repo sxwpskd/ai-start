@@ -1,6 +1,14 @@
 # 开发文档（执行+验收层 · 任务拆解 / 决策记录 / 实施顺序）
 
-更新时间：2026-09-19（第六批次）前端 F1/F2 交互定稿并落地：模式由工作流开关
+更新时间：2026-09-19（第八批次）D4 VUE 双构建按方案 A 修复（ProjectBuilderNode
+检测 dist 已存在则跳过，决策记录第 32 条，B7 挂起项了结）+ 部署访问方案拍板
+（②本地/生产 Nginx 同构，后端零代码改动，决策记录第 33 条，已知问题闭环）；
+F5 维持待做
+（第七批次 2026-09-19：阶段三收尾联调通过（用户确认符合预期）：
+第 29 条（F1/F2 交互重做）+ 第 30 条（生成期工具面：VUE 工具集摘 writeThink、
+readThink 无文档时返回不可用提示）+ 第 31 条（生成图质检节点停用）全链路联调；
+已知问题新增"部署 URL 本地不可达"（三方案待拍板）；D4 VUE 双构建仍挂起
+（第六批次 2026-09-19：前端 F1/F2 交互定稿并落地：模式由工作流开关
 决定，两种模式各两个控件——直连=发送按钮 + codeType 选择器、工作流=发送按钮 +
 「生成代码」保险按钮（均"无对话 或 构思期"出现）；「生成代码」为纯标记、不发
 请求、状态存全局（首页按下 → 聊天页首条 initPrompt 进生成图）；发送按钮按标记
@@ -167,7 +175,7 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
   非功能缺陷
 
 ### B6：base 工作流（工作流通道 · 构思）（2026-09-19 编码完成，编译/type-check
-    通过；联调验收待做；结构定稿见决策记录第 18/19/20 条）
+    通过；已联调（2026-09-19）；结构定稿见决策记录第 18/19/20 条）
 -【新增 · 已完成 2026-09-19】langgraph4j/node/RagNode：占位节点（零逻辑透传，
   仅记录 currentStep）——原计划"搁置后补"，实际先建插槽：构思图与生成图都已
   挂上，B1/B2 恢复后只填检索逻辑不改图
@@ -266,10 +274,11 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
 - 状态：编码完成——后端 9 文件（mvnw compile 通过）+ 前端 2 文件
   （AppChatPage.vue 生成图接线/F4 全套 + 6 处历史类型错误修复；
   HomePage.vue 移除"工作流未就绪"闸），npm run build 通过；联调完成（2026-09-19）
--【挂起】D4 VUE 双构建：Facade.processTokenStream 的 onCompleteResponse 内嵌
-  构建一次 vue_project_{appId}，ProjectBuilderNode 随后再构建同一目录——npm
-  install/build 跑两遍，叠加 10min 超时后 VUE 路径偏紧；候选方案 A：Project
-  BuilderNode 检测 dist 已存在则跳过（最小改动）；方案 B：保留现状；联调前定
+-【已解决 2026-09-19（第八批次）】D4 VUE 双构建：Facade.processTokenStream 的
+  onCompleteResponse 内嵌构建一次 vue_project_{appId}，ProjectBuilderNode 随后
+  再构建同一目录——npm install/build 跑两遍。按方案 A 修复：ProjectBuilderNode
+  检测 dist 已存在则跳过（Facade 内嵌构建产物直接用）、不存在才构建兜底
+  （决策记录第 32 条）
 
 ======================================================================
 ## 二、前端（独立仓库 · 详细规格 v3，2026-09-17）
@@ -383,6 +392,15 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
   ——原拍板延后处理，B7 前端接线时一并修复（3 处加判空守卫，不改运行时行为）；
   npm run build（run-p 同时跑 vue-tsc --build 与 vite build）已通过、退出码 0。
   此前的记录：build 必失败（退出码 2），dev 模式 esbuild 只剥类型不检查故不可见
+-【已拍板 2026-09-19（第八批次），归决策记录第 33 条】部署 URL 本地不可达：
+  deployApp 返回 URL = CODE_DEPLOY_HOST（硬编码 http://localhost）+ deployKey，
+  后端无 /{deployKey} 路由、code_deploy 目录无服务读取。三案评估后拍板方案②
+  本地/生产 Nginx 同构——/ai/ 反代 8100（proxy_read_timeout 600s、
+  proxy_buffering off 保 SSE）+ / 根路径映射 tmp/code_deploy（index.html +
+  try_files 兜底）；后端零代码改动（CODE_DEPLOY_HOST 恰为 Nginx 80）。
+  剩余动作：本地起 Nginx 后验证部署地址可达 + 截图封面恢复（配置不入仓库，
+  用户拍板，本地自行维护；中文路径在 Windows Nginx 下若 404 用 junction 转纯
+  英文路径）
 
 ======================================================================
 ## 三、依赖与实施顺序（2026-09-17 定序：前端先行 → 直连 → 工作流）
@@ -406,6 +424,12 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
   【第六批次 2026-09-19】F1/F2 交互按决策记录第 29 条重做并落地（模式定控件组合 /
    「生成代码」转纯标记并全局化 / 直连新增 codeType 选择器 / Enter 停用）；
    前端 npm run build 通过；前端联调待做
+  【第七批次 2026-09-19】生成期工具面调整（第 30 条）+ 生成图质检节点停用
+   （第 31 条）编码完成，mvnw compile 通过；与第六批次前端改动一并联调通过
+   （用户确认符合预期）；剩余：F5、D4 双构建、部署 URL 方案拍板
+  【第八批次 2026-09-19】D4 双构建修复（第 32 条，mvnw compile 通过）+ 部署
+   方案拍板（第 33 条，后端零改动）；剩余：F5（BASE 期可视化编辑入口）、
+   本地 Nginx 启动验证
 【搁置恢复后】B1 → B2 → RagNode 补挂（B4 工具列表 / B6/B7 图插槽）
 
 ======================================================================
@@ -882,4 +906,71 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
    - 首页：开关=开隐藏 codeType 选择器、初始类型归位 BASE（类型由 RouterNode
      自动路由）；开关=关保留选择器（创建时选初始类型，第 17 条不变）
    - 状态：编码完成（workflow store + AppChatPage.vue + HomePage.vue），
-     npm run build（vue-tsc + vite）通过；前端联调待做
+     npm run build（vue-tsc + vite）通过；联调通过（2026-09-19，第七批次）
+
+30.【生成期工具面调整：摘 writeThink / readThink 不可用提示】（2026-09-19 确认）
+   - 问题缘起：工厂 VUE_PROJECT 分支的 getAllTools() 会把构思双工具一并注册
+     （生成图 code_generator 与生成后改码对话共用该分支），生成期 AI 可调
+     writeThink 改写构思文档，与"构思沉淀只在构思期"的产品语义冲突
+   - 定稿四点：①ToolManager 新增 getAllToolsExcept(String...)（按名排除，
+     getAllTools 零删除保留）；②VUE_PROJECT 改用 getAllToolsExcept
+     ("writeThink")——readThink 保留，生成期 AI 可回读构思现状；③ReadThinkTool
+     调用前 existsThink 预检，无构思文档时返回"本工具不存在（当前应用暂无构思
+     文档）"（拍板选"注册但返回不可用提示"而非"无文档不注册"）；④base-prompt.txt
+     工具规则第 5 条的判断文案同步（首轮判断语义不变）
+   - 影响面：BASE 分支双工具注册、ThinkFileUtils.readThink 的"尚未创建"提示
+     （后端读取路径 ThinkNode/B5/B7 使用）均不动；生成期工具集 = 文件工具 +
+     readThink
+   - 状态：已实现并联调通过（2026-09-19，第七批次）
+
+31.【生成图质检节点停用】（2026-09-19 拍板，性能优先）
+   - 动因：生成图端到端过慢（实测 4 分钟未跑完）。质检节点把产物目录全部代码
+     文件（含 package-lock.json 等大文件，无大小上限）拼成大串非流式送 AI
+     （deepseek-chat + json_object），单次数十秒；质检不过还会整环重跑（生成
+     + 双构建再来一遍），是最大耗时项之一
+   - 定稿：CodeGenConcurrentWorkflow 暂时摘除 code_quality_check——节点注册
+     与质检条件边整段注释保留（零删除原则），code_generator 改直连条件边：
+     VUE_PROJECT → project_builder，其余 → END（新增 routeAfterCodeGen；原
+     routeAfterQualityCheck 保留不再引用）；质检重试环随之消失
+   - 依据：VUE 在 code_generator 内的 Facade onCompleteResponse 已真实构建
+     （构建失败即抛错），质检对 VUE 属二次劳动；HTML/MULTI_FILE 无构建环节、
+     质检收益低
+   - 连带：SSE done 摘要 qualityValid/qualityErrors 恒为 null（Controller
+     判空已有、前端未引用，无破坏）；进度文案不再出现"检查代码质量"
+   - 恢复方式：还原 createWorkflow 内注释的 addNode 与质检条件边、
+     code_generator 边改回质检路由即可
+   - 状态：已实现并联调通过（2026-09-19，第七批次）
+
+32.【D4 VUE 双构建修复：方案 A（dist 已存在则跳过）】（2026-09-19 确认；
+    了结 B7 条目挂起的 D4）
+   - 现状问题：工作流通道 VUE 生成时 npm install + npm run build 跑两遍——
+     ①code_generator 内 Facade.processTokenStream 的 onCompleteResponse 内嵌
+     构建一次 vue_project_{appId}（失败仅记日志不抛错）；②紧随的 project_builder
+     节点对同一目录再构建。单遍分钟级、双构建直接翻倍，质检停用后成为剩余最大
+     耗时项
+   - 定稿（方案 A，最小改动）：ProjectBuilderNode 构建前检测 dist 目录——已
+     存在则直接作为 buildResultDir（内嵌构建随每次 code_generator 流完成执行，
+     属最新产物）、跳过重复 npm；不存在才真正构建（兜底内嵌构建失败场景）。
+     方案 B（保留现状）否决
+   - 已知取舍（接受）：重试轮中若内嵌构建失败而历史 dist 残留，project_builder
+     会跳过构建、终态拿旧 dist——内嵌构建失败本身罕见，且旧 dist 优于无产物
+   - 状态：已实现，mvnw compile 通过（2026-09-19，第八批次）
+
+33.【部署访问方案拍板：本地/生产 Nginx 同构（方案②）】（2026-09-19 确认；
+    了结联调发现的"部署 URL 本地不可达"已知问题）
+   - 问题：deployApp 返回 URL = CODE_DEPLOY_HOST（硬编码 http://localhost）+
+     deployKey，但后端无 /{deployKey} 路由——StaticResourceController 只读
+     tmp/code_output（前缀 /ai/static），部署产物 tmp/code_deploy 无任何服务
+     读取；本地无 Nginx 时地址必然不可达，异步截图/封面同因失败
+   - 三案取舍：①后端加 /static/deploy 映射（多一套路由、与生产形态不同）；
+     ②Nginx 同构（零后端改动、与生产一致、顺带落地决策第 8 条的 Nginx 配置）；
+     ③部署目录改放 code_output 复用 /static（治标、目录语义变脏）——拍板②
+   - 定稿：本地 Nginx 80 端口——/ai/ 反代 127.0.0.1:8100（proxy_read_timeout
+     600s、proxy_buffering off 保 SSE）+ / 根路径 root 指 tmp/code_deploy
+     （index index.html、try_files $uri $uri/ =404）；deployKey 6 位字母数字
+     与 /ai/ 无冲突（Nginx 最长前缀先匹配）。生产同构，后端零代码改动
+     （CODE_DEPLOY_HOST 恰为 Nginx 80）
+   - 边界：Nginx 配置不入仓库（用户拍板），本地自行维护；中文路径在 Windows
+     Nginx 下若 404，用 junction 把 tmp/code_deploy 转纯英文路径再指
+   - 状态：方案已定；剩余动作 = 本地起 Nginx 后验证部署地址可达 + 截图封面
+     恢复（待做）

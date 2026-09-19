@@ -1,6 +1,12 @@
 # 业务流程：数据流转与状态机（行为层 · 【现有】与【目标】对照）
 
-更新时间：2026-09-19（F1/F2 交互定稿并落地：新增 1.3 前端控件组合、1.2 通道矩阵与
+更新时间：2026-09-19（D4 双构建修复：2.7/3.4 project_builder 标注 dist 跳过、
+对照表新增构建行；部署访问方案拍板②Nginx 同构：2.4 注记改为已定方案；
+决策见 开发文档.txt 决策记录第 32/33 条）
+（前次 2026-09-19：联调通过后同步现状：生成图质检节点停用——2.7/3.4/1.2
+出环改写、对照表新增质检行；生成期工具面调整（2.2 标注）；2.4 补部署 URL
+已知问题；决策见 开发文档.txt 决策记录第 30/31 条）
+（前次 2026-09-19：F1/F2 交互定稿并落地：新增 1.3 前端控件组合、1.2 通道矩阵与
 2.7/3.3/3.4 触发入口、对照表同步；决策见 开发文档.txt 决策记录第 29 条）
 （前次 2026-09-19：B7 生成工作流通道后端编码完成：新增 2.7 流程实录、3.4
 标注后端已实现、通道矩阵与对照表同步；决策见 开发文档.txt 决策记录第 21~27 条）
@@ -65,7 +71,7 @@ codeGenType 值 + 成功后落库时机 + 前端按钮显隐涌现（开发文�
 | 请求场景 | 工作流开关 = 开 | 工作流开关 = 关（直连） |
 |---|---|---|
 | BASE 期构思对话 | 构思图（rag 占位 → think 节点），同步阻塞返回【已实现并联调（B6）】 | 流式输出 + AI 自主调用 writeThink / readThink 工具【已实现（B4）】 |
-| 生成触发 | 「生成代码」保险标记点亮 + 发送 → 生成图（AI 路由 → rag → 读 think → 生成 → 质检重试 → 构建），SSE 进度推送【已实现并联调（B7）】 | codeType 选择器选型 + 发送（携带 codeGenType）→ update → 现有生成分支【已实现（B5）】 |
+| 生成触发 | 「生成代码」保险标记点亮 + 发送 → 生成图（AI 路由 → rag → 读 think → 生成 → 构建；质检节点已停用），SSE 进度推送【已实现并联调（B7）】 | codeType 选择器选型 + 发送（携带 codeGenType）→ update → 现有生成分支【已实现（B5）】 |
 | 生成后改码对话 | 始终直连流式（现有行为，不进图） | 同左 |
 
 两通道共同产物链：writeThink 全量覆盖写 think_{appId}.md（工具内同步渲染
@@ -119,7 +125,8 @@ index.html）→ tmp/code_output/base_{appId}/ 目录 → 前端预览浏览器�
   → chatHistoryService.addChatMessage（USER 消息落库）
   → AiCodeGeneratorFacade.generateAndSaveCodeStream
       → 工厂：Caffeine 缓存 (appId+codeGenType)；创建时 Redis 记忆(窗口20) + DB 回灌
-        （VUE_PROJECT：prototype 多例模型 + ToolManager 工具 + 防幻觉策略）
+        （VUE_PROJECT：prototype 多例模型 + ToolManager 工具（2026-09-19 起
+          摘 writeThink，决策记录第 30 条）+ 防幻觉策略）
       → 流式响应：
           - HTML/MULTI_FILE：Flux 直出；完成后聚合 → 解析 → 保存
           - VUE_PROJECT：TokenStream，AI 调文件工具写项目；完成后 npm 构建
@@ -146,6 +153,10 @@ generateToolExecutedResult 格式化并揉入 AI 消息落库 → Controller 包
 ```
 部署：deployApp → 6位 deployKey → VUE 则构建 dist → 复制到 tmp/code_deploy/{deployKey}
       → 更新库 → 返回 URL → 虚拟线程异步截图 → COS → 更新 cover
+      （返回 URL = CODE_DEPLOY_HOST（硬编码 http://localhost）+ deployKey，该地址
+        由 Nginx 提供服务：/ai/ 反代 8100、/ 根路径映射 tmp/code_deploy——
+        2026-09-19 拍板方案②本地/生产同构（决策记录第 33 条），后端零代码
+        改动；剩余：本地起 Nginx 后验证地址可达与截图封面恢复）
 预览：StaticResourceController → tmp/code_output/{deployKey}/**（.txt 返回 octet-stream）
 下载：/app/download/{appId} → ZIP 文件流
 ```
@@ -159,7 +170,7 @@ image_collector → prompt_enhancer → router → code_generator(appId=0L, bloc
 仅 step 级事件；无记忆、未接主业务。目标方案将其转正为工作流通道的两张图
 （2026-09-19：router 后已预埋 rag 占位插槽，转正归 B7）。
 
-## 2.6 构思工作流通道（B6，2026-09-19 编码完成，联调验收待做）
+## 2.6 构思工作流通道（B6，2026-09-19 编码完成，已联调）
 
 ```
 用户消息（开关=开且 BASE 期，含预览页点选元素转文字）
@@ -200,13 +211,16 @@ Executor 骨架 / 节点编写模式。
         （生成期应用跳过 AI 路由直接用锁定类型；null/BASE 兜底 HTML；结果只写
         context 不碰 DB）→ rag（占位）→ code_generator（appId 取 context、
         thinkContext 拼增强提示词、流聚合进 genReply——VUE 经
-        collectHistoryText 复用直连落库规则）→ 质检条件边（fail 回
-        code_generator 带修复提示词 / VUE 走 build / 其他 skip）→ project_builder
+        collectHistoryText 复用直连落库规则）→ code_generator 条件边
+        （VUE 走 build / 其他 skip；质检节点已停用、原 fail 重试环消失，
+        决策记录第 31 条）→ project_builder（dist 已存在则跳过重复构建——
+        code_generator 内 Facade 已构建过，双构建消除，决策记录第 32 条）
       ⑤全图成功后统一落库：codeGenType = generationType（单向锁定）+
         genReply 全文落 AI 消息（决策记录第 21 条；失败不落库、留构思期可重试）
       finally unlock（解锁失败由看门狗约 30s 自动过期兜底）
   → SSE 事件：progress（节点完成即推 + 10s 心跳含 step/elapsedMs，兼保活 Nginx）
-    → done（路由结果/产物目录/质检结论/耗时摘要）或 business-error
+    → done（路由结果/产物目录/耗时摘要；质检停用后 qualityValid/qualityErrors
+    恒为 null）或 business-error
     （{error,code,message}）→ complete；断线后 send 异常吞掉（生成在锁内跑完
     照常落库）；超时 10min 定时守门 cancel(true) 中断（决策记录第 27 条）
   → 前端：EventSource 消费（触发入口见 1.3），收终态 es.close()；断线对账重查
@@ -232,7 +246,7 @@ Executor 骨架 / 节点编写模式。
   → AI 响应落库（StreamHandlerExecutor 复用）
 ```
 
-## 3.2 BASE 期 · 工作流通道（同步阻塞）【已实现 2026-09-19（B6），实录见 2.6；联调验收待做】
+## 3.2 BASE 期 · 工作流通道（同步阻塞）【已实现并联调 2026-09-19（B6），实录见 2.6】
 
 ```
 用户消息 → base 工作流：
@@ -258,9 +272,10 @@ SSE 进度推送；类型由 RouterNode 自动路由，用户不选型）→ 生
     START → image_plan → 并行搜集×4 → aggregator → prompt_enhancer
       → RouterNode（AI 路由选型，只写 context；成功后由服务层落库）
       → rag 节点（占位）→ 读 think（服务层已入 context.thinkContext）
-      → code_generator → code_quality_check
-            ├─ fail → code_generator（带修复提示词重试）
-            └─ pass → project_builder（VUE）/ END（其他）
+      → code_generator
+            ├─ VUE → project_builder（dist 已存在则跳过，第 32 条）
+            └─ 其他 → END
+  （质检节点已停用 2026-09-19，原 fail 重试环消失；恢复方式见决策记录第 31 条）
   → RLock 防重 + 虚拟线程执行 + 全图成功后统一落库（实录见 2.7）
 ```
 
@@ -310,6 +325,8 @@ think 页（md 渲染视图）──用户点选──> getElementInfo 采集
 | think 文件 | 双形态已实现：WriteThinkTool/ReadThinkTool（B3/B4）+ ThinkNode（B6，不经工具类） | —（已实现） |
 | 可视化编辑 | 生成期已实现（点选元素改代码） | BASE 期放开编辑入口（F5，机制复用零改造） |
 | 生成触发 | 直连已实现（B5：codeGenType 参数 + 成功后落库；F2' 选择器选型 + 发送） | 已实现（B7：「生成代码」保险标记 + 发送 → GET /app/gen/workflow） |
+| 代码质检 | 生成图内节点已停用（2026-09-19，决策记录第 31 条），重试环消失 | 按需恢复：还原 CodeGenConcurrentWorkflow 注释 |
+| VUE 构建 | D4 双构建已修（2026-09-19）：project_builder 检测 dist 已存在则跳过（决策记录第 32 条） | —（已修复） |
 | 改码对话 | 现有多轮生成（恒直连） | 不变 |
 
 ======================================================================

@@ -207,7 +207,7 @@
         updateStatus('工作流执行中...', 'connecting');
         addEvent('系统消息', '开始执行工作流: ' + prompt, new Date().toLocaleTimeString());
 
-        const url = `http://localhost:8123/api/workflow/execute-flux?prompt=${encodeURIComponent(prompt)}`;
+        const url = `http://localhost:8100/ai/workflow/execute-flux?prompt=${encodeURIComponent(prompt)}`;
         eventSource = new EventSource(url);
 
         eventSource.onopen = function() {

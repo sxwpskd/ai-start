@@ -13,7 +13,7 @@ class ScreenshotServiceImplTest {
     private ScreenshotServiceImpl screenshotService;
     @Test
     void generateAndUploadScreenshot() {
-        String testUrl = "https://www.codefather.cn";
+        String testUrl = "https://www.baidu.com";
         System.out.println("ready");
         screenshotService.generateAndUploadScreenshot(testUrl);
         System.out.println("ok");
