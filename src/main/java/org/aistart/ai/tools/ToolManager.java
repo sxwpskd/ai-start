@@ -5,8 +5,10 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 工具管理器
@@ -56,5 +58,18 @@ public class ToolManager {
      */
     public BaseTool[] getAllTools() {
         return tools;
+    }
+
+    /**
+     * 获取已注册的工具集合（按名称排除部分工具）
+     *
+     * @param excludedToolNames 需要排除的工具英文名
+     * @return 过滤后的工具实例数组
+     */
+    public BaseTool[] getAllToolsExcept(String... excludedToolNames) {
+        Set<String> excluded = Set.of(excludedToolNames);
+        return Arrays.stream(tools)
+                .filter(tool -> !excluded.contains(tool.getToolName()))
+                .toArray(BaseTool[]::new);
     }
 }

@@ -110,6 +110,15 @@ const doCreateApp = async () => {
 // F1：工作流开关切换（全局持久化）
 const onWorkflowSwitchChange = (checked: boolean | string | number) => {
   workflowStore.setWorkflowEnabled(Boolean(checked))
+  // 工作流模式不选生成类型（由 RouterNode 自动路由）：开启时归位为构思期，避免残留旧选型
+  if (Boolean(checked)) {
+    selectedCodeGenType.value = CodeGenTypeEnum.BASE
+  }
+}
+
+// 工作流模式：「生成代码」保险开关（全局，创建后带进聊天页，首条 initPrompt 进生成图）
+const toggleGenCodeMark = () => {
+  workflowStore.setGenCodeMarked(!workflowStore.genCodeMarked)
 }
 
 // 加载我的应用
@@ -215,14 +224,26 @@ onMounted(() => {
           class="prompt-input"
         />
         <div class="input-actions">
-          <!-- 新建时的初始生成类型（选非构思模式需二次确认，创建即锁定） -->
+          <!-- 直连模式（开关=关）：新建时的初始生成类型（选非构思模式需二次确认，创建即锁定） -->
           <a-select
+            v-if="!workflowStore.workflowEnabled"
             v-model:value="selectedCodeGenType"
             size="small"
             class="code-gen-type-select"
             :options="codeGenTypeOptions"
             :disabled="creating"
           />
+          <!-- 工作流模式（开关=开）：「生成代码」保险按钮（纯标记，不发请求）——
+               点亮后创建的应用首条 initPrompt 直接进生成图，否则进构思图；类型由 RouterNode 自动路由 -->
+          <a-button
+            v-if="workflowStore.workflowEnabled"
+            size="small"
+            :type="workflowStore.genCodeMarked ? 'primary' : 'default'"
+            :disabled="creating"
+            @click="toggleGenCodeMark"
+          >
+            生成代码
+          </a-button>
           <!-- F1 工作流开关（全局用户级） -->
           <div class="workflow-switch">
             <span class="workflow-switch-label">工作流</span>

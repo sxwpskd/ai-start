@@ -24,6 +24,14 @@ export const useWorkflowStore = defineStore('workflow', () => {
     localStorage.setItem(WORKFLOW_ENABLED_STORAGE_KEY, String(value))
   }
 
+  // 「生成代码」保险标记（工作流模式专属）：点亮表示本次触发走生成图，不发任何请求；
+  // 存全局是为了首页按下后能带进聊天页（首条 initPrompt 直接进生成图），用完即熄灭
+  const genCodeMarked = ref(false)
+
+  function setGenCodeMarked(value: boolean) {
+    genCodeMarked.value = value
+  }
+
   // 当前应用 codeGenType（由聊天页同步）
   const appCodeGenType = ref<string>()
 
@@ -44,6 +52,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
   return {
     workflowEnabled,
     setWorkflowEnabled,
+    genCodeMarked,
+    setGenCodeMarked,
     appCodeGenType,
     appMode,
     setAppCodeGenType,

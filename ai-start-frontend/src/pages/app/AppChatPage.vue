@@ -119,7 +119,6 @@
                 :placeholder="getInputPlaceholder()"
                 :rows="4"
                 :maxlength="1000"
-                @keydown.enter.prevent="sendMessage"
                 :disabled="workflowStore.generating || !isOwner"
               />
             </a-tooltip>
@@ -129,16 +128,36 @@
               :placeholder="getInputPlaceholder()"
               :rows="4"
               :maxlength="1000"
-              @keydown.enter.prevent="sendMessage"
               :disabled="workflowStore.generating"
             />
             <div class="input-actions">
-              <!-- F2 生成代码按钮（显示条件：开关=关 && 构思期） -->
-              <a-button
+              <!-- 直连模式（开关=关）：codeType 选择器（无对话或构思期时出现）；
+                   选非 base 类型后点发送，本次请求按该类型直接生成 -->
+              <a-select
+                v-if="showCodeTypeSelector"
+                v-model:value="directCodeGenType"
+                size="small"
+                class="code-type-select"
+                :options="chatCodeTypeOptions"
+                :disabled="workflowStore.generating || !isOwner"
+              />
+              <!-- F2 生成代码按钮（工作流模式专属保险：开关=开 &&（无对话 或 构思期））——纯标记按钮：
+                   点击不发任何请求，仅点亮标记；由发送按钮追加口令并分流到生成图 -->
+              <!-- 旧逻辑（按钮自行发送请求，已废弃保留）：开关=开直接走工作流通道 / 开关=关弹类型选择框走直连 -->
+              <!-- <a-button
                 v-if="showGenCodeButton"
                 size="small"
                 :disabled="workflowStore.generating || !isOwner"
                 @click="openCodeGenModal"
+              >
+                生成代码
+              </a-button> -->
+              <a-button
+                v-if="showGenCodeButton"
+                size="small"
+                :type="workflowStore.genCodeMarked ? 'primary' : 'default'"
+                :disabled="workflowStore.generating || !isOwner"
+                @click="toggleGenCodeMark"
               >
                 生成代码
               </a-button>
@@ -230,8 +249,9 @@
       @open-site="openDeployedSite"
     />
 
-    <!-- F2：选择代码生成类型弹窗（三选一，必选；取消=留构思期） -->
-    <a-modal
+    <!-- F2：选择代码生成类型弹窗（旧交互，已废弃保留）：
+         按钮改为纯标记后无入口——类型由后端 RouterNode 决定，不再由前端传参 -->
+    <!-- <a-modal
       v-model:open="codeGenModalVisible"
       title="选择代码生成类型"
       ok-text="开始生成"
@@ -244,7 +264,7 @@
           {{ opt.label }}
         </a-radio>
       </a-radio-group>
-    </a-modal>
+    </a-modal> -->
   </div>
 </template>
 
@@ -260,7 +280,8 @@ import {
   deleteApp as deleteAppApi,
 } from '@/api/appController'
 import { listAppChatHistory } from '@/api/chatHistoryController'
-import { CODE_GEN_TYPE_OPTIONS, CodeGenTypeEnum, formatCodeGenType } from '@/utils/codeGenTypes'
+// CODE_GEN_TYPE_OPTIONS 仅旧类型选择弹窗使用，按钮改纯标记后无入口（注释保留）
+import { CodeGenTypeEnum, formatCodeGenType } from '@/utils/codeGenTypes'
 import request from '@/request'
 
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
@@ -300,12 +321,27 @@ const messages = ref<Message[]>([])
 const userInput = ref('')
 const messagesContainer = ref<HTMLElement>()
 
-// F2 生成代码相关：弹窗可见性、已选类型、三选一选项（排除 BASE）
-const codeGenModalVisible = ref(false)
-const selectedCodeGenType = ref<CodeGenTypeEnum>()
-const genTypeOptions = CODE_GEN_TYPE_OPTIONS.filter(
-  (opt) => opt.value !== CodeGenTypeEnum.BASE
-)
+// 直连模式：codeType 选择器（默认 base=先构思再生成；选非 base 后发送即按该类型直接生成）
+const directCodeGenType = ref<string>(CodeGenTypeEnum.BASE)
+
+// 聊天页类型选项（BASE 按用户体感写作"先构思，再生成"，与首页选择器一致）
+const chatCodeTypeOptions = [
+  { label: '先构思，再生成', value: CodeGenTypeEnum.BASE },
+  { label: '原生 HTML 模式', value: CodeGenTypeEnum.HTML },
+  { label: '原生多文件模式', value: CodeGenTypeEnum.MULTI_FILE },
+  { label: 'Vue 项目模式', value: CodeGenTypeEnum.VUE_PROJECT },
+]
+
+// F2 生成代码标记：纯标记（按钮不发请求）——点亮后由发送按钮在消息末尾追加口令并分流到生成图
+// 旧：组件内局部状态（首页按下无法带进聊天页），改存全局 workflow store（首页/聊天页共用）
+// const genCodeMarked = ref(false)
+
+// F2 生成代码相关（旧：弹窗可见性、已选类型、三选一选项；按钮改纯标记后无入口，注释保留）
+// const codeGenModalVisible = ref(false)
+// const selectedCodeGenType = ref<CodeGenTypeEnum>()
+// const genTypeOptions = CODE_GEN_TYPE_OPTIONS.filter(
+//   (opt) => opt.value !== CodeGenTypeEnum.BASE
+// )
 
 // 对话历史相关
 const loadingHistory = ref(false)
@@ -348,11 +384,14 @@ const aiLoadingText = computed(() => {
   return 'AI 正在思考...'
 })
 
-// 生成触发的固定文案（直连 F2 与工作流通道按钮共用）
-const GEN_CODE_MESSAGE = '请根据以上构思，生成代码'
+// 生成触发的固定文案（旧：直连 F2 与工作流通道按钮共用；按钮改纯标记后失去入口，注释保留）
+// const GEN_CODE_MESSAGE = '请根据以上构思，生成代码'
 
-// 工作流通道专属触发口令（前端硬编码识别，后端不解析文案）
-const WORKFLOW_TRIGGER_COMMAND = '我已明确我的需求，现在生成代码'
+// 工作流通道专属触发口令（旧：靠用户手打 + 前端嗅探识别，已废弃保留）
+// const WORKFLOW_TRIGGER_COMMAND = '我已明确我的需求，现在生成代码'
+
+// 生成口令：由「生成代码」标记按钮点亮后，发送按钮追加到用户消息末尾，前端据此改调生成端点
+const GEN_CODE_COMMAND = '我已明确我的需求，现在生成代码。'
 
 // iframe 的 :key——构思期预览地址前后不变（同为 base_{appId}/），
 // 地址不变时 Vue 不会重新加载 iframe，靠改变 key 强制重建
@@ -384,9 +423,20 @@ const isAdmin = computed(() => {
   return loginUserStore.loginUser.userRole === 'admin'
 })
 
-// 生成代码按钮显示条件：构思期（appMode 由 codeGenType 派生，空=BASE）
-// 开关=关 → 点击弹类型选择框走直连；开关=开 → 直接走工作流通道（类型由 RouterNode 决定）
-const showGenCodeButton = computed(() => workflowStore.appMode === 'BASE')
+// 无对话：尚未产生任何消息（首页创建后跳转、聊天页首次进入）
+const hasNoConversation = computed(() => messages.value.length === 0)
+
+// 生成代码按钮显示条件（工作流模式专属保险）：开关=开 &&（无对话 或 构思期）
+// 旧：开关=开 && 构思期；旧旧：仅按 appMode 判断（开关=关时也显示，点击会弹类型框并自行发送直连请求）
+// const showGenCodeButton = computed(() => workflowStore.appMode === 'BASE')
+const showGenCodeButton = computed(
+  () => workflowStore.workflowEnabled && (hasNoConversation.value || workflowStore.appMode === 'BASE')
+)
+
+// 直连模式：codeType 选择器显示条件：开关=关 &&（无对话 或 构思期）
+const showCodeTypeSelector = computed(
+  () => !workflowStore.workflowEnabled && (hasNoConversation.value || workflowStore.appMode === 'BASE')
+)
 
 // 应用详情相关
 const appDetailVisible = ref(false)
@@ -503,6 +553,12 @@ const sendInitialMessage = async (prompt: string) => {
     // message.info('工作流待转正')
     // return
     if (workflowStore.appMode === 'BASE') {
+      // 首页「生成代码」保险已按下 → 首条 initPrompt 直接进生成图（标记一次性消费）
+      if (workflowStore.genCodeMarked) {
+        workflowStore.setGenCodeMarked(false)
+        await triggerWorkflowGenerate(prompt)
+        return
+      }
       await sendMessageByWorkflow(prompt)
       return
     }
@@ -554,12 +610,19 @@ const sendMessage = async () => {
     sendContent += elementContext
   }
 
-  // F1：开关=开 + 构思期 → 工作流通道（口令走生成图，普通消息走构思图）；
+  // F1：开关=开 + 构思期 → 工作流通道；
+  // 生成代码标记点亮时，由发送按钮在消息末尾追加生成口令，并改调生成图（口令前端识别）；
   // 其余情况（开关=关，或开关=开但已是生成期）→ 直连通道（生成后改码恒走直连）
   if (workflowStore.workflowEnabled && workflowStore.appMode === 'BASE') {
     // 原占位逻辑（构思期/生成期均已接入真实调用）
     // message.info('工作流待转正')
     // return
+    // 生成代码标记：纯标记按钮只负责点亮，口令在发送时注入（末尾追加，一次性消费后熄灭）
+    const genCodeMarkedThisSend = workflowStore.genCodeMarked
+    if (genCodeMarkedThisSend) {
+      sendContent += `\n${GEN_CODE_COMMAND}`
+      workflowStore.setGenCodeMarked(false)
+    }
     userInput.value = ''
     // 发送消息后，清除选中元素并退出编辑模式
     if (selectedElementInfo.value) {
@@ -568,11 +631,18 @@ const sendMessage = async () => {
         toggleEditMode()
       }
     }
-    if (isWorkflowTriggerCommand(sendContent)) {
+    // 旧：口令嗅探（靠用户手打口令触发，已废弃保留）
+    // if (isWorkflowTriggerCommand(sendContent)) {
+    //   await triggerWorkflowGenerate(sendContent)
+    // } else {
+    //   await sendMessageByWorkflow(sendContent)
+    // }
+    // 带口令的发送 = 生成触发（think 预检 → 生成图）；无口令 = 普通构思对话（构思图）
+    if (genCodeMarkedThisSend) {
       await triggerWorkflowGenerate(sendContent)
-    } else {
-      await sendMessageByWorkflow(sendContent)
+      return
     }
+    await sendMessageByWorkflow(sendContent)
     return
   }
 
@@ -604,7 +674,13 @@ const sendMessage = async () => {
 
   // 开始生成
   workflowStore.generating = true
-  await generateCode(sendContent, aiMessageIndex)
+  // 直连模式：选择器选了非 base 类型 → 本次请求按该类型直接生成；
+  // 工作流模式下已生成后的改码对话恒走直连（文档规则），不带类型参数
+  const directGenType =
+    !workflowStore.workflowEnabled && directCodeGenType.value !== CodeGenTypeEnum.BASE
+      ? (directCodeGenType.value as CodeGenTypeEnum)
+      : undefined
+  await generateCode(sendContent, aiMessageIndex, directGenType)
 }
 
 // 生成代码 - 使用 EventSource 处理流式响应（F2 生成触发时携带 codeGenType 参数）
@@ -785,8 +861,8 @@ const sendMessageByWorkflow = async (content: string) => {
   }
 }
 
-// 判断是否为工作流生成触发口令（前端识别，后端不解析文案）
-const isWorkflowTriggerCommand = (content: string) => content.trim() === WORKFLOW_TRIGGER_COMMAND
+// 判断是否为工作流生成触发口令（已废弃：随口令嗅探一并移除，保留备查）
+// const isWorkflowTriggerCommand = (content: string) => content.trim() === WORKFLOW_TRIGGER_COMMAND
 
 // 工作流通道生成触发：先做构思文档存在性预检，无构思文档时二次确认
 const triggerWorkflowGenerate = async (content: string) => {
@@ -961,49 +1037,54 @@ const onWorkflowSwitchChange = (checked: boolean | string | number) => {
   workflowStore.setWorkflowEnabled(Boolean(checked))
 }
 
-// F2：生成代码按钮——开关=关弹类型选择框；开关=开直接走工作流通道（类型由 RouterNode 决定）
-const openCodeGenModal = () => {
-  if (workflowStore.workflowEnabled) {
-    triggerWorkflowGenerate(GEN_CODE_MESSAGE)
-    return
-  }
-  codeGenModalVisible.value = true
+// F2：生成代码标记切换——纯标记按钮，不发任何请求；点亮后由发送按钮注入口令并改调生成图
+const toggleGenCodeMark = () => {
+  workflowStore.setGenCodeMarked(!workflowStore.genCodeMarked)
 }
 
-// F2：确认生成 → 复用现有 SSE 请求（仅多带 codeGenType 参数）
-const confirmCodeGen = async () => {
-  if (!selectedCodeGenType.value || workflowStore.generating) {
-    return
-  }
-  codeGenModalVisible.value = false
-  await startGenerateCode(selectedCodeGenType.value)
-}
+// F2 旧交互（按钮自行发送请求，已废弃保留）：开关=关弹类型选择框走直连；开关=开直接走生成图
+// const openCodeGenModal = () => {
+//   if (workflowStore.workflowEnabled) {
+//     triggerWorkflowGenerate(GEN_CODE_MESSAGE)
+//     return
+//   }
+//   codeGenModalVisible.value = true
+// }
 
-// F2：触发生成（固定文案；后端读 think 拼接增强提示词，成功后锁定 codeGenType）
-const startGenerateCode = async (codeGenType: CodeGenTypeEnum) => {
-  const fixedMessage = GEN_CODE_MESSAGE
+// F2 旧：确认生成 → 复用现有 SSE 请求（仅多带 codeGenType 参数）
+// const confirmCodeGen = async () => {
+//   if (!selectedCodeGenType.value || workflowStore.generating) {
+//     return
+//   }
+//   codeGenModalVisible.value = false
+//   await startGenerateCode(selectedCodeGenType.value)
+// }
 
-  // 添加用户消息（固定文案）
-  messages.value.push({
-    type: 'user',
-    content: fixedMessage,
-  })
-
-  // 添加AI消息占位符
-  const aiMessageIndex = messages.value.length
-  messages.value.push({
-    type: 'ai',
-    content: '',
-    loading: true,
-  })
-
-  await nextTick()
-  scrollToBottom()
-
-  // 开始生成
-  workflowStore.generating = true
-  await generateCode(fixedMessage, aiMessageIndex, codeGenType)
-}
+// F2 旧：触发生成（固定文案；后端读 think 拼接增强提示词，成功后锁定 codeGenType）
+// const startGenerateCode = async (codeGenType: CodeGenTypeEnum) => {
+//   const fixedMessage = GEN_CODE_MESSAGE
+//
+//   // 添加用户消息（固定文案）
+//   messages.value.push({
+//     type: 'user',
+//     content: fixedMessage,
+//   })
+//
+//   // 添加AI消息占位符
+//   const aiMessageIndex = messages.value.length
+//   messages.value.push({
+//     type: 'ai',
+//     content: '',
+//     loading: true,
+//   })
+//
+//   await nextTick()
+//   scrollToBottom()
+//
+//   // 开始生成
+//   workflowStore.generating = true
+//   await generateCode(fixedMessage, aiMessageIndex, codeGenType)
+// }
 
 // 更新预览
 const updatePreview = () => {
@@ -1319,8 +1400,8 @@ onUnmounted(() => {
 }
 
 .input-wrapper .ant-input {
-  /* 右侧预留操作区宽度（生成代码/工作流开关/发送），避免输入文字被遮挡 */
-  padding-right: 200px;
+  /* 右侧预留操作区宽度（codeType 选择器/生成代码/工作流开关/发送），避免输入文字被遮挡 */
+  padding-right: 320px;
 }
 
 .input-actions {
@@ -1343,6 +1424,11 @@ onUnmounted(() => {
   font-size: 12px;
   color: #666;
   white-space: nowrap;
+}
+
+/* 直连模式：codeType 选择器（与首页选择器同宽） */
+.code-type-select {
+  width: 150px;
 }
 
 /* F2 生成类型弹窗选项（纵向三选一） */

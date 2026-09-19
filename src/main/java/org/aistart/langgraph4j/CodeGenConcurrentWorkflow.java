@@ -42,7 +42,9 @@ public class CodeGenConcurrentWorkflow {
                     // RAG 检索占位节点（RAG 搁置中，B1/B2 恢复后在此补检索并并入 enhancedPrompt）
                     .addNode("rag", RagNode.create())
                     .addNode("code_generator", CodeGeneratorNode.create())
-                    .addNode("code_quality_check", CodeQualityCheckNode.create())
+                    // 质检节点暂时停用（2026-09-19：耗时高——全目录代码非流式送 AI，且 VUE 在
+                    // code_generator 内已真实构建兜底）；恢复时取消注释并还原下方条件边即可
+                    // .addNode("code_quality_check", CodeQualityCheckNode.create())
                     .addNode("project_builder", ProjectBuilderNode.create())
 
                     // 添加并发图片收集节点
@@ -73,16 +75,24 @@ public class CodeGenConcurrentWorkflow {
                     // 路由确定生成类型后再检索，便于按类型检索对应语料规范（流程.txt 3.4）
                     .addEdge("router", "rag")
                     .addEdge("rag", "code_generator")
-                    .addEdge("code_generator", "code_quality_check")
-
-                    // 质检条件边
-                    .addConditionalEdges("code_quality_check",
-                            edge_async(this::routeAfterQualityCheck),
+                    // 质检停用后：生成完直接按类型决定构建或结束（重试环随之消失）
+                    .addConditionalEdges("code_generator",
+                            edge_async(this::routeAfterCodeGen),
                             Map.of(
                                     "build", "project_builder",
-                                    "skip_build", END,
-                                    "fail", "code_generator"
+                                    "skip_build", END
                             ))
+                    // 旧链路（质检在环上，含 fail 回 code_generator 的重试）：
+                    // .addEdge("code_generator", "code_quality_check")
+                    //
+                    // // 质检条件边
+                    // .addConditionalEdges("code_quality_check",
+                    //         edge_async(this::routeAfterQualityCheck),
+                    //         Map.of(
+                    //                 "build", "project_builder",
+                    //                 "skip_build", END,
+                    //                 "fail", "code_generator"
+                    //         ))
                     .addEdge("project_builder", END)
                     .compile();
         } catch (GraphStateException e) {
@@ -149,7 +159,23 @@ public class CodeGenConcurrentWorkflow {
     }
 
     /**
+     * 路由函数：不经过质检节点时，按生成类型决定下一步
+     * VUE_PROJECT 需要 npm 构建产物 → project_builder；其余类型无项目可构建 → 直接 END
+     */
+    private String routeAfterCodeGen(MessagesState<String> state) {
+        WorkflowContext context = WorkflowContext.getContext(state);
+        CodeGenTypeEnum generationType = context.getGenerationType();
+        if (generationType == CodeGenTypeEnum.VUE_PROJECT) {
+            log.info("Vue 项目，进入构建节点");
+            return "build";
+        }
+        log.info("非 Vue 项目，无需构建，流程结束");
+        return "skip_build";
+    }
+
+    /**
      * 路由函数：根据质检结果决定下一步
+     * 当前质检节点已停用（见 createWorkflow 注释），本方法暂不被引用，保留以便随时恢复
      */
     private String routeAfterQualityCheck(MessagesState<String> state) {
         WorkflowContext context = WorkflowContext.getContext(state);
