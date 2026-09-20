@@ -35,6 +35,11 @@ public class ThinkNode {
      */
     private static final String THINK_CONTEXT_PREFIX = "\n\n以下是当前的应用构思文档：\n";
 
+    /**
+     * 检索语料注入前缀（ragContext 非空时拼接；位于用户消息与构思文档之间）
+     */
+    private static final String RAG_CONTEXT_PREFIX = "\n\n以下是与本次需求相关的项目语料参考：\n";
+
     public static AsyncNodeAction<MessagesState<String>> create() {
         return node_async(state -> {
             WorkflowContext context = WorkflowContext.getContext(state);
@@ -43,7 +48,14 @@ public class ThinkNode {
             // 1. 读取构思文档现状并拼增强提示词
             // 记忆窗口仅 20 条，长对话会淘汰最初含全文的消息，且直连通道写入的内容也需被看到，故每轮主动回读
             String thinkContent = ThinkFileUtils.readThink(appId);
-            String userMessage = context.getOriginalPrompt() + THINK_CONTEXT_PREFIX + thinkContent;
+            // 消息编排：用户需求 → 检索语料（若有）→ 构思文档现状
+            // 构思文档垫底是与 base-workflow-prompt.txt 的契约（"每轮消息末尾附带当前构思文档"，决策记录第 19 条）
+            StringBuilder messageBuilder = new StringBuilder(context.getOriginalPrompt());
+            if (StrUtil.isNotBlank(context.getRagContext())) {
+                messageBuilder.append(RAG_CONTEXT_PREFIX).append(context.getRagContext());
+            }
+            messageBuilder.append(THINK_CONTEXT_PREFIX).append(thinkContent);
+            String userMessage = messageBuilder.toString();
             // 2. 调用无工具构思 AI 服务（同步阻塞返回）
             BaseThinkWorkflowService thinkService = SpringContextUtil
                     .getBean(BaseThinkWorkflowServiceFactory.class)

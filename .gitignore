@@ -3,7 +3,7 @@
 application-local.yml
 application-prod.yml
 tmp
-语料/
+rag-corpus/
 HELP.md
 target/
 .mvn/wrapper/maven-wrapper.jar

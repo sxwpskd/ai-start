@@ -121,15 +121,17 @@ public class AiCodeGeneratorServiceFactory {
                         .build();
             }
             case BASE -> {
-                // 构思期：流式模型（构思对话无需推理模型）+ 仅构思双工具
+                // 构思期：流式模型（构思对话无需推理模型）+ 显式注册三枚工具
                 // 注意：不可照抄 VUE_PROJECT 的 getAllTools()，否则文件类工具会被注册，
                 // AI 在构思期即可编写代码，破坏"只构思"边界（开发文档决策记录第 15 条）
+                // ragSearch：构思期可由 AI 自主检索语料（B1/B2 恢复后追加注册，决策记录第 34/35 条）
                 StreamingChatModel openAiStreamingChatModel = SpringContextUtil
                         .getBean("streamingChatModelPrototype", StreamingChatModel.class);
                 yield AiServices.builder(AiCodeGeneratorService.class)
                         .streamingChatModel(openAiStreamingChatModel)
                         .chatMemoryProvider(memoryId -> chatMemory)
-                        .tools(toolManager.getTool("writeThink"), toolManager.getTool("readThink"))
+                        .tools(toolManager.getTool("writeThink"), toolManager.getTool("readThink"),
+                                toolManager.getTool("ragSearch"))
                         .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
                                 toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
                         ))

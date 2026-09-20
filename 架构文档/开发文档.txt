@@ -1,6 +1,15 @@
 # 开发文档（执行+验收层 · 任务拆解 / 决策记录 / 实施顺序）
 
-更新时间：2026-09-19（第八批次）D4 VUE 双构建按方案 A 修复（ProjectBuilderNode
+更新时间：2026-09-20（第九批次）RAG 全量落地并联调通过：B1（基础设施，
+含格式不兼容事故修复，模型终选 text-embedding-v3，决策记录第 34 条）+
+B2 及工作流双侧接入（决策记录第 35 条：RagNode 双图分流与类目倾向 /
+ThinkNode 消息编排 / RagTool 直连注册 / 提示词补条款）全部完成，
+用户手动联调三链路确认符合预期——RAG 闭环；B6/B7 图结构与 code_generator
+零改动（插槽红利兑现）；F5（BASE 期可视化编辑）同日核实收口：实际零改动，
+前端从未关闭过 BASE 期编辑入口（编辑按钮无 appMode 门槛 + think 页与生成页
+共用 iframe 无条件注入），"放开入口"是空操作；阶段二遗留仅剩本地 Nginx
+启动验证（第 33 条）与 prod yml 镜像（部署前）
+（第八批次 2026-09-19：D4 VUE 双构建按方案 A 修复（ProjectBuilderNode
 检测 dist 已存在则跳过，决策记录第 32 条，B7 挂起项了结）+ 部署访问方案拍板
 （②本地/生产 Nginx 同构，后端零代码改动，决策记录第 33 条，已知问题闭环）；
 F5 维持待做
@@ -62,18 +71,65 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
 ## 一、后端（本仓库）
 ======================================================================
 
-### B1：RAG 基础设施 【搁置：RAG 整体后置，恢复时先定 embedding 选型（倾向 DashScope + InMemory）】
--【新增】config/EmbeddingModel 配置（DashScope text-embedding 或自实现 HTTP 客户端，待选型）
--【新增】config/EmbeddingStore 配置（InMemoryEmbeddingStore 起步）
--【新增】rag/CorpusImporter：导入 ./语料/ 四类 md（references/rules/skills/documents），
-  切片 + 向量化入库（启动时执行或手动触发）
--【新增】rag/RagService：query → topK 相关片段；工具与节点共用的底层
--【改动】pom.xml：embedding 相关依赖
-- 验收：调用 RagService 可返回与 query 相关的语料片段
+### B1：RAG 基础设施 【2026-09-20 完成：阶段一编码 + 验收通过（实测 2702
+    片段 0 失败批次 / 135s 导入 / 检索 top5 分数 0.84+ 且来源命中预期语料）；
+    选型定稿见决策记录第 34 条】
+-【改动 · 已完成 2026-09-20】pom.xml：新增 langchain4j-community-dashscope
+  1.1.0-beta7（验证结论见决策记录第 34 条：与 langchain4j-core 1.1.0 同版本
+  无冲突；dashscope-sdk-java 由项目直连 2.21.1 统一，无多版本共存）
+-【新增 · 已完成 2026-09-20】config/EmbeddingModelConfig：@ConfigurationProperties
+  （prefix=langchain4j.community.dashscope）+ QwenEmbeddingModel 单例 Bean
+  （导入与查询共用同一模型，向量空间一致）；local yml 已配 text-embedding-v3
+  （qwen3.7-text-embedding-flash 因响应格式不兼容库被否，过程见决策记录
+  第 34 条"格式不兼容事故"）
+-【新增 · 已完成 2026-09-20】config/EmbeddingStoreConfig：InMemoryEmbeddingStore
+  单例（重启即空，启动导入重建）
+-【新增 · 已完成 2026-09-20】rag/CorpusImporter：ApplicationRunner 启动导入
+  （触发时机拍板见决策记录第 34 条）；硬编码根目录 rag-corpus（原"语料"
+  更名；遍历四类 documents/references/rules/skills）→ UTF-8 读取 →
+  DocumentSplitters.recursive 切片（1000 字符 / overlap 150，source+category
+  元数据）→ 10 条/批 embedAll（embedAll 不自行分批，必须手动控制）→ 入库；
+  失败批跳过、导入异常不阻断启动；实测 155 文件 → 2702 片段
+-【新增 · 已完成 2026-09-20】rag/RagService：search(query, topK) → topK 片段
+  （来源/分类/正文/score）+ formatFragments 统一格式化（工具与节点共用）；
+  检索异常降级空结果不阻断链路；DEFAULT_TOP_K=5 硬编码、暂不设相似度阈值
+- 验收：✅ 通过（2026-09-20 RagServiceTest 实测：导入 155 文件 → 2702 片段、
+  失败批次 0、耗时 135s；检索 top5 分数 0.84~0.85，命中"列表页/查询"相关
+  语料且 source 元数据正确）
+- 遗留（部署前须处理）：application-prod.yml 未配 langchain4j.community.
+  dashscope 段，切 prod profile 前须镜像（否则 Bean 创建时 apiKey 为 null）
 
-### B2：RagTool（直连通道 · 工具形态）【搁置：随 B1 后置】
--【新增】tools/RagTool（BaseTool 子类，@Tool：按用户需求检索语料规范/参考）
-- 依赖 B1；验收：直连对话中 AI 自主调用并引用检索结果
+### B2：RagTool 及三使用点接入（直连 + 双工作流图）【2026-09-20 完成并联调
+    通过；设计定稿见决策记录第 35 条（含类目倾向、RagNode 分流判据、
+    ThinkNode 消息编排）】
+-【新增 · 已完成 2026-09-20】langgraph4j/state/WorkflowContext：新增 ragContext
+  字段（构思图检索结果，独立字段不并入 originalPrompt；生成图不用——其检索
+  结果直接并入 enhancedPrompt）
+-【改动 · 已完成 2026-09-20】langgraph4j/node/RagNode：占位转正，一个类两图
+  共用，按 generationType==null 分流（构思图=写 ragContext；生成图=并回
+  enhancedPrompt）；类目过滤（构思图 references+documents / 生成图 rules+
+  skills，见第 35 条）；无命中不写字段，检索异常由 RagService 内部降级
+-【改动 · 已完成 2026-09-20】rag/RagService：新增三参 search(query, topK,
+  categories)（MetadataFilterBuilder IsIn 类目过滤）；原两参方法保留为全库
+  委托（零删除，直连工具用）
+-【改动 · 已完成 2026-09-20】langgraph4j/node/ThinkNode：消息编排改为
+  用户需求 → 检索语料（若有）→ 构思文档现状（构思文档垫底守提示词契约，
+  第 19 条）
+-【新增 · 已完成 2026-09-20】ai/tools/RagTool：BaseTool 子类，@Tool ragSearch
+  （@P query，无 @ToolMemoryId——检索与应用无关）；全库检索；无命中返回友好
+  提示；generateToolExecutedResult 只输出短文案不回显片段（同 ReadThinkTool
+  先例，防聊天历史膨胀）
+-【改动 · 已完成 2026-09-20】AiCodeGeneratorServiceFactory：BASE 分支显式注册
+  第 3 枚工具 getTool("ragSearch")（仍不照抄 getAllTools，守第 15 条边界）；
+  生成期经 getAllToolsExcept("writeThink") 自动获得 ragSearch（零改动，
+  符合第 4 条"生成期 rag 可被调用"）
+-【改动 · 已完成 2026-09-20】prompt/base-prompt.txt：工作职责第 5 条（语料
+  检索）+ 工具调用规则第 6 条（ragSearch 用法，末尾追加不打乱既有编号）
+-【改动 · 已完成 2026-09-20】prompt/base-workflow-prompt.txt：工作职责第 5 条
+  （"语料参考位于构思文档之前"，与 ThinkNode 拼接顺序契约闭环）
+- 依赖 B1；验收：✅ 通过（2026-09-20 用户手动联调三链路确认：直连构思对话
+  AI 自主调用 ragSearch 并引用检索结果、构思图回复贴合语料、生成图产物
+  符合规范，全部符合预期）；mvnw compile 通过
 
 ### B3：think 文件与渲染（2026-09-18 结构定稿，覆盖 09-17 版；同日增 readThink，见决策记录第 14 条）
 -【改动 · 已完成 2026-09-18】pom.xml：新增 commonmark-java 依赖
@@ -365,6 +421,13 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
   均已完成；npm run build（含 vue-tsc）通过
 
 ### F5 预览切换（2026-09-18 规格翻转：think 页由只读 → 可点选）
+【已实现 · 2026-09-20 核实收口：实际零改动——代码从未关闭过 BASE 期编辑入口，
+    "放开"动作是空操作】
+- 核实证据（前端代码）：①updatePreview 中 BASE 期 previewUrl 即 think 渲染页
+  （base_{appId}/）；②编辑模式按钮显示条件仅 isOwner && previewUrl，无 appMode
+  门槛；③onIframeLoad 无条件 visualEditor.init——think 页与生成页共用同一
+  iframe，注入天然覆盖。后端"预览页点选信息的处理"章节已于 09-18 写入
+  base-prompt.txt（决策记录第 14 条）——点选消息的处理链路完整
 - iframe src 由 appMode 驱动：BASE → think 渲染页静态地址；生成模式 → 现有预览
 - 可视化编辑 BASE 期同样开启：复用 visualEditor.ts 注入 + postMessage + 消息拼装，
   前端零改造，仅放开 BASE 期编辑模式入口
@@ -430,7 +493,12 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
   【第八批次 2026-09-19】D4 双构建修复（第 32 条，mvnw compile 通过）+ 部署
    方案拍板（第 33 条，后端零改动）；剩余：F5（BASE 期可视化编辑入口）、
    本地 Nginx 启动验证
-【搁置恢复后】B1 → B2 → RagNode 补挂（B4 工具列表 / B6/B7 图插槽）
+   【F5 收口 2026-09-20】核实为实际零改动（前端从未关闭 BASE 期编辑入口，
+   详见第二节 F5 条目），随第九批次一并关闭
+【RAG 恢复 · 2026-09-20 完成（第九批次）】B1（基础设施 + 验收）+ B2（RagTool
+  及三使用点接入）全部完成并联调通过（用户确认三链路符合预期），RAG 闭环；
+  B6/B7 图结构与 code_generator 零改动。剩余遗留：prod yml 镜像 embedding
+  配置、rag-corpus 目录随部署、检索参数（topK/阈值/类目集合）联调期观察调优
 
 ======================================================================
 ## 四、决策记录（唯一归属 · 按拍板顺序；无待确认挂起项）
@@ -974,3 +1042,113 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
      Nginx 下若 404，用 junction 把 tmp/code_deploy 转纯英文路径再指
    - 状态：方案已定；剩余动作 = 本地起 Nginx 后验证部署地址可达 + 截图封面
      恢复（待做）
+
+34.【RAG 恢复启动：依赖验证 / EmbeddingModel Bean / 模型名与 key 纠错】
+    （2026-09-20 确认；了结第 9 条"先验证 langchain4j-community 依赖兼容"
+    挂起项；第 9 条倾向方案原样成立：DashScope text-embedding +
+    InMemoryEmbeddingStore）
+   - 依赖验证结论（mvnw compile 通过 + dependency:tree 实证）：community-
+     dashscope 1.1.0-beta7 声明依赖 langchain4j-core 1.1.0，与项目版本完全
+     一致、零冲突；其声明的 dashscope-sdk-java 2.20.6 被项目直连声明 2.21.1
+     覆盖（Maven 直连优先，classpath 单一版本）——"兼容性风险"排除，无需走
+     自实现 EmbeddingModel 备选路线；QwenEmbeddingModel 的 builder API 经
+     javap 核实（apiKey/modelName/dimension/baseUrl；dimension 为可选，
+     当前不设定、用模型默认 1024 维）
+   - EmbeddingModel Bean 定稿：config/EmbeddingModelConfig（@Configuration +
+     @ConfigurationProperties prefix=langchain4j.community.dashscope；@Bean
+     dashscopeEmbeddingModel）返回 QwenEmbeddingModel 单例——语料导入与
+     检索查询共用同一模型，向量空间一致由单一 Bean 天然保证；配置项
+     api-key + embedding-model.model-name（local yml）
+   - 模型名纠错（实测，教训：模型名以实际调用为准，勿凭印象）：原 yaml 配的
+     text-embedding-qwen3.8-flash 服务端直接返回"Model not exist"（该名取自
+     "通用大模型"（对话模型）列表，embedding 接口不认）；实测同日可用且均
+     1024 维：qwen3.7-text-embedding-flash、text-embedding-v3；
+     ——初选 flash、后因格式不兼容改回 v3，完整过程见下方"qwen3.7 格式
+     不兼容事故"条目（两次教训合记）
+   - qwen3.7 格式不兼容事故（2026-09-20 实测定位，分四个环节记录）：
+     ① 现象：首轮导入 2702 片段全部批次失败（WARN 匀速刷屏：offset=0 起
+        每批必挂），向量库为空
+     ② 误判过程（引以为戒）：初期仅凭单批 WARN 日志，按概率预判"限流/
+        内容异常/网络抖动"三选——方向全错；且更早一步的模型可用性验证用
+        原始 HTTP 单条调用成功（直接取 embedding 字段），恰好绕过了库内
+        的批量解析路径，埋下"验证通过"的假象——单点验证覆盖不了库的
+        完整代码路径
+     ③ 定位方法（拿到完整堆栈后 3 步锁定）：堆栈顶 NPE 在库内部
+        QwenEmbeddingModel.batchEmbedTexts:120 的 Comparator 排序——
+        "比较键为 null"；反编译确认该处按响应的 text_index 字段排序还原
+        顺序；再用原始 API 对比两个模型的批量响应字段——qwen3.7-text-
+        embedding-flash 返回 [embedding, index, type]（字段已改名），
+        text-embedding-v3 返回 [embedding, text_index]（旧格式）——根因：
+        新一代 qwen3.7 系列 embedding 模型把响应字段 text_index 改名为
+        index，SDK 2.21.1 与 community-dashscope 1.1.0-beta7 均按旧字段
+        名反序列化，取值为 null → 排序 NPE；调用本身成功（每批约 290ms
+        是真实 API 往返），是"调用成功、解析必炸"
+     ④ 修复：yaml 模型名改回 text-embedding-v3（响应格式兼容旧库；1024 维
+        与 flash 相同、中文检索质量无实质差异；代价 0.0005 元/千 token 为
+        flash 4 倍，全量导入一次约 1 元，接受）；否决升级 community 库版本
+        （会牵动 langchain4j-core 对齐，刚验完的兼容性需重验）与自实现
+        EmbeddingModel（第 9 条兜底路线，能不走就不走）；备选留档：
+        community-dashscope 后续版本适配新格式后可切回 flash 省钱（届时
+        只改 yaml 一行）
+     通用教训：三方撞车类问题（新模型 × 旧库）不看堆栈纯靠经验预判必偏；
+     验证库兼容性必须走库的真实调用路径（批量 embedAll），不能用原始 HTTP
+     单条调用代替
+   - key 认知纠错（实测）：百炼 API key 为账号/业务空间级、不绑定具体模型
+     （同一 key 实测成功调用两个不同 embedding 模型）；key 仅与地域/业务
+     空间有关——"key 需要与模型对应"的顾虑不成立，无需换 key
+   - 语料导入触发时机拍板：启动时执行（用户拍板简单优先；160 个 md 的
+     embedding 调用秒到分钟级，重启重建可接受）
+   - B1 阶段一编码完成（2026-09-20，编译通过）：EmbeddingStoreConfig（内存
+     向量库单例）+ rag/CorpusImporter（ApplicationRunner：硬编码 rag-corpus
+     根目录——目录已由"语料"更名；UTF-8 遍历四类目录 → DocumentSplitters
+     递归切片 1000 字符/overlap 150、source+category 元数据 → 10 条/批
+     embedAll——已核实 embedAll 不自行分批、DashScope 单次行数上限
+     flash=20 / v3=10，必须手动分批；失败批跳过不阻断）+ rag/RagService
+     （search(query, topK) → topK 片段；formatFragments 统一格式化供工具
+     与节点共用；检索异常降级空结果不阻断链路；DEFAULT_TOP_K=5 硬编码、
+     暂不设相似度阈值，联调后再调）；实测导入 155 文件 → 2702 片段
+   - 遗留（部署前须处理）：application-prod.yml 未配 langchain4j.community.
+     dashscope 段，切 prod profile 前须镜像（否则 Bean 创建时 apiKey 为 null）
+   - 后续顺序：B1 剩余验收（v3 重跑导入 + RagServiceTest 检索实测）→
+     B2（RagTool）→ RagNode 补挂（两图插槽已就位）
+   - B1 验收补充（2026-09-20 实测通过）：v3 重跑导入 2702 片段、失败批次 0、
+     耗时 135s；RagServiceTest 检索 top5 分数 0.84~0.85、source 元数据正确，
+     命中"列表页/查询"相关语料——B1 验收通过
+
+35.【B2 及三使用点接入：RagNode 双图分流 / 类目倾向 / ThinkNode 消息编排】
+    （2026-09-20 确认并联调通过；第 4 条"rag 双形态"与 B6/B7 插槽预埋的落地）
+   - RagNode 分流判据 = context.generationType 是否为 null（非 codeGenType）：
+     构思图的 rag 在 think 之前（图内无 router，该字段恒 null）；生成图的 rag
+     在 router 之后（resolveGenerationType 三路径必产出非空非 BASE）。
+     关键坑（用户追问钉死）：不可用 codeGenType 判——构思期应用首次触发生成
+     图时 codeGenType 仍为 BASE（成功后才落库，第 16/21 条锚点），会误判；
+     codeGenType 是业务入参、generationType 是图内产物，两者语义不同
+   - 双图输出去向（延续"字段语义纯净"原则，与 thinkContext 同理，用户认可）：
+     构思图检索结果写独立字段 ragContext（不并入 originalPrompt，保持用户
+     原始语义）；生成图检索结果并回 enhancedPrompt 自身（prompt_enhancer 已
+     跑完不能回头合并，节点自行追加 → code_generator 零改动，拼接格式与
+     直连逐字一致的约束（第 26 条）不被触碰）
+   - 类目倾向（用户拍板：两图检索的东西本来就不一样）：
+     构思图 = references + documents（页面参考 + 生成计划，业务场景向）；
+     生成图 = rules + skills（编码规范 + 生成技能，编码规范向）；
+     直连工具 = 全库不过滤（AI 自主决定看什么，第 2 条原意）。
+     实现 = MetadataFilterBuilder IsIn("category") 类目过滤（元数据在
+     CorpusImporter 切片时写入），不做加权混合；类目集合为 RagNode 常量，
+     联调觉得不对一行改
+   - ThinkNode 消息编排：用户需求 → 检索语料（ragContext 非空时拼）→ 构思
+     文档现状。构思文档垫底是与 base-workflow-prompt.txt 的既有契约（"每轮
+     消息末尾附带当前构思文档"，第 19 条），语料只能插中间；工作流版提示词
+     第 5 条同步告知"语料参考位于构思文档之前"，双向闭环
+   - RagTool 定稿：@Tool ragSearch(@P query)，无 @ToolMemoryId（检索与应用
+     无关）；全库检索；generateToolExecutedResult 只输出短文案不回显片段
+     （同 ReadThinkTool 先例——否则检索结果随聊天历史落库膨胀记忆）；
+     BASE 分支显式注册第 3 枚工具（仍守第 15 条"不照抄 getAllTools"边界）；
+     生成期经 getAllToolsExcept("writeThink") 自动获得（零改动，符合第 4 条
+     "生成期 rag 可被调用"）
+   - 提示词追加纪律：只在职责/规则列表末尾追加（第 5/6 条），不打乱既有编号
+     ——决策记录多处按编号引用条款（如"工作职责第 3/4 条"），乱序会连锁失效
+   - 降级规则（统一）：RagService 内部吞异常返回空列表；节点无命中不写字段；
+     三链路在无语料/检索失败时行为与未装 RAG 完全一致
+   - 状态：已实现并联调通过（2026-09-20，第九批次）：直连 AI 自主调用
+     ragSearch 并引用、构思图回复贴合语料、生成图产物符合规范，用户确认
+     全部符合预期；B6/B7 图结构与 code_generator 零改动（插槽红利兑现）

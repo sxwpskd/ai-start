@@ -116,6 +116,13 @@ public class WorkflowContext implements Serializable {//支持序列化
     private String thinkContext;
 
     /**
+     * 构思期（BASE）工作流中 RagNode 检索到的语料片段（含来源标注）
+     * 独立字段，不并入 originalPrompt——保持用户原始语义纯净（与 thinkContext 同理）；
+     * 生成图不使用该字段（其检索结果直接并入 enhancedPrompt）
+     */
+    private String ragContext;
+
+    /**
      * 生成期工作流本轮产出的 AI 回复全文（全图成功后由服务层落库）
      */
     private String genReply;
