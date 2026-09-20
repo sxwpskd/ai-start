@@ -474,10 +474,10 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
 
         // 10. 构建应用访问 URL
         /*测试环境*/
-        String appDeployUrl = String.format("%s/%s/", AppConstant.CODE_DEPLOY_HOST, deployKey);
+        //String appDeployUrl = String.format("%s/%s/", AppConstant.CODE_DEPLOY_HOST, deployKey);
         /*/
         /* 生产环境*/
-        //String appDeployUrl = String.format("%s/%s/", deployHost, deployKey);
+        String appDeployUrl = String.format("%s/%s/", deployHost, deployKey);
 
         // 11. 异步生成截图并更新应用封面
         generateAppScreenshotAsync(appId, appDeployUrl);

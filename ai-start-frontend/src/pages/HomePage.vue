@@ -182,6 +182,9 @@ const viewWork = (app: API.AppVO) => {
 
 // 页面加载时获取数据
 onMounted(() => {
+  // 进入首页即提示限流规则（AI 接口 24 小时内提问次数有限）
+  message.warning('24小时只能提问5-15次，次数非常少，请谨慎提问', 6)
+
   loadMyApps()
   loadFeaturedApps()
 

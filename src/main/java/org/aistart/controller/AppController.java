@@ -99,7 +99,9 @@ public class  AppController {
      * @return 生成结果流
      */
     @GetMapping(value = "/chat/gen/code", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 60, message = "AI 对话请求过于频繁，请稍后再试")
+    //旧限流：每分钟 5 次
+    //@RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 60, message = "AI 对话请求过于频繁，请稍后再试")
+    @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 24 * 60 * 60, message = "AI 对话次数已达今日上限（24 小时内最多 5 次），请明天再试")
     public Flux<ServerSentEvent<String>> chatToGenCode(@RequestParam Long appId,
                                                        @RequestParam String message,
                                                        @RequestParam(required = false) String codeGenType,
@@ -138,6 +140,7 @@ public class  AppController {
      * @return 本轮 AI 回复全文
      */
     @PostMapping("/chat/think/workflow")
+    @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 24 * 60 * 60, message = "构思对话次数已达今日上限（24 小时内最多 5 次），请明天再试")
     public BaseResponse<String> thinkWorkflow(@RequestBody AppThinkWorkflowRequest thinkWorkflowRequest,
                                               HttpServletRequest request) {
         ThrowUtils.throwIf(thinkWorkflowRequest == null, ErrorCode.PARAMS_ERROR);
@@ -160,6 +163,7 @@ public class  AppController {
      * @param request 请求对象
      */
     @GetMapping(value = "/gen/workflow", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 24 * 60 * 60, message = "应用生成次数已达今日上限（24 小时内最多 5 次），请明天再试")
     public SseEmitter genWorkflow(@RequestParam Long appId,
                                   @RequestParam String message,
                                   HttpServletRequest request) {

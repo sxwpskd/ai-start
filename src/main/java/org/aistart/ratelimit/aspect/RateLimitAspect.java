@@ -37,7 +37,7 @@ public class RateLimitAspect {
         String key = generateRateLimitKey(point, rateLimit);
         // 使用Redisson的分布式限流器
         RRateLimiter rateLimiter = redissonClient.getRateLimiter(key);
-        rateLimiter.expire(Duration.ofHours(1)); // 1 小时后过期
+        rateLimiter.expire(Duration.ofHours(24)); // 24 小时后过期（与最大限流窗口对齐）
         // 设置限流器参数：每个时间窗口允许的请求数和时间窗口
         rateLimiter.trySetRate(RateType.OVERALL, rateLimit.rate(), rateLimit.rateInterval(), RateIntervalUnit.SECONDS);
         // 尝试获取令牌，如果获取失败则限流
