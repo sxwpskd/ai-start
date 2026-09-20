@@ -104,7 +104,7 @@ public class AiCodeGeneratorServiceFactory {
                         .chatMemoryProvider(memoryId -> chatMemory)
                         // 生成期不注册构思写入工具 writeThink——AI 在生成/改码阶段不得改写构思文档；
                         // readThink 保留（生成期可回读构思现状，无文档时工具自身返回不可用提示）
-                        .tools(toolManager.getAllToolsExcept("writeThink"))
+                        .tools((Object[]) toolManager.getAllToolsExcept("writeThink"))
                         .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
                                 toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
                         ))
