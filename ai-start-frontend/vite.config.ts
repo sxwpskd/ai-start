@@ -18,7 +18,10 @@ export default defineConfig({
   server: {
     proxy: {
       '/ai': {
-        target: 'http://localhost:8100',
+        // 旧：本地后端（本地与服务器完全解耦后，本地无后端可代理）
+        // target: 'http://localhost:8100',
+        // 新：代理到服务器 nginx（80 端口），走与生产相同的 /ai 反代链路
+        target: 'http://129.204.193.220',
         changeOrigin: true,
         secure: false,
       },
