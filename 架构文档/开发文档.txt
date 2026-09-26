@@ -513,7 +513,7 @@ B4 编码完成并编译通过；新增决策记录第 16 条 BASE 模式认知�
 
 2.【语料】已就绪，位于 ./语料/：references（页面参考）/ rules（编码+组件规范）/
    skills（生成技能）/ documents（生成计划），约 160 个 md
-   - 语料面向 mobilebank 管理端（Vue + Yum UI）→ RAG 定位：按用户需求检索
+   - 语料面向 mobilebank 管理端（Vue）→ RAG 定位：按用户需求检索
      规范/技能/参考，增强生成提示词
 
 3.【think 文件】AI 写 txt；工具调用结束后由后端将 txt 渲染进 HTML；
